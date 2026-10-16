@@ -5,7 +5,7 @@ description: >
 
 inputs:
   role-arn:
-    description: IAM role ARN to assume via OIDC (repo variable AWS_ROLE_ARN). Empty = use access keys.
+    description: IAM role ARN to assume via OIDC (repo variables AWS_PLAN_ROLE_ARN / AWS_APPLY_ROLE_ARN, or AWS_ROLE_ARN). Empty = use access keys.
     required: false
     default: ""
   access-key-id:
@@ -28,6 +28,12 @@ runs:
         SK: ${{ inputs.secret-access-key }}
       run: |
         if [ -n "$ROLE_ARN" ]; then
+          # Format check only. It cannot prove the role exists or that its trust policy allows this run;
+          # only the assume-role call below can show that.
+          if ! printf '%s' "$ROLE_ARN" | grep -Eq '^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$'; then
+            echo "::error title=Malformed role ARN::The configured role ARN is not of the form arn:aws:iam::<12-digit account>:role/<name>."
+            exit 1
+          fi
           echo "Auth mode: OIDC role assumption (preferred)"
         elif [ -n "$AK" ] && [ -n "$SK" ]; then
           echo "::warning title=Long-lived AWS keys::Using GitHub secrets AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY. Prefer OIDC (see docs/GITHUB_ACTIONS.md)."

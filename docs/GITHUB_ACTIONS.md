@@ -1,17 +1,55 @@
 # GitHub Actions configuration
 
-Credentials are **never** stored in this repo. Workflows reference them by name only; the repo's existing GitHub-stored credentials were not inspected (no `.git`/remote or prior workflows existed here), so confirm which mechanism you actually have.
+Credentials are never stored in this repository. Workflows read them by name from GitHub secrets and variables.
 
-## Option A (preferred): OIDC role assumption — no long-lived keys
+**Status:** the workflow structure is tested locally (`scripts/check_workflows.py`, `actionlint`). The AWS side (OIDC provider, roles, trust policies, Environment, secrets) is **not configured or tested**; every AWS authentication path below is unverified until a run succeeds.
 
-1. **Create the OIDC provider** (once per AWS account):
+## Behavior
+
+| Event | 1 Repo checks | 2 Format | 3 Validate/lint/test | 4 Checkov | 5 Plan | 6 Apply | 7 Summary |
+|---|---|---|---|---|---|---|---|
+| Pull request to `main` (same repo or fork) | run | run | run | run | **skipped (by design)** | **skipped (by design)** | run |
+| Push to `main` | run | run | run | run | run | run if the plan has changes, after approval | run |
+| Manual run on `main` | run | run | run | run | run | skipped (never applies) | run |
+| Manual run on another branch | run | run | run | run | skipped | skipped | run |
+| Any required check fails | stops here | | | | skipped | skipped | reports the first failure |
+
+`terraform-destroy.yml` is a separate, manual-only workflow gated by the same Environment. Nothing destroys automatically.
+
+**Decision: pull requests run static checks only, not an AWS-backed plan.** With OIDC, the workflow file *in the pull request* is the one that runs, so a PR-triggered plan would let any branch in this repository obtain AWS credentials (a trust policy for `repo:OWNER/REPO:pull_request` cannot distinguish a reviewed change from a malicious one). In a public repository, plan output would also expose resource names and the account ID. The cost is that plan errors surface only after merge; reviewers rely on the static checks, the mocked `terraform test` suite and Checkov. If you later want PR plans, add a separate read-only role trusted for `pull_request`, keep the repository private, and extend `scripts/check_workflows.py` to match.
+
+### Why jobs were skipped (evidence from the first runs)
+
+GitHub's API for the public repository showed two successful runs on push to `main`: jobs 3 and 4 succeeded, **plan and apply were skipped, not failed**.
+
+- *Plan* had `if: workflow_dispatch || same-repo pull_request`. A push matches neither, so it was skipped.
+- *Apply* was skipped twice over: it `needs` plan (a skipped need skips its dependents) and its own `if` required a manual dispatch with an `apply` input.
+- At that time the repository had **no GitHub Environments** (`total_count: 0`), so no required reviewers existed.
+
+The current workflow deliberately never uses `always()` outside the summary job, so a failed or skipped prerequisite keeps plan and apply from running. Job 7 names the first failing job and explains each skip. `scripts/check_workflows.py` simulates GitHub's `needs`/`if` semantics over 2,880 event, branch and failure combinations.
+
+## Plan and apply integrity
+
+1. Job 5 plans with `-detailed-exitcode -out=tfplan` (exit 0 = no changes, 2 = changes, 1 = error). With no changes, nothing is uploaded and apply is skipped.
+2. The plan file can contain secret state values (for example the CloudFront origin-verify header), and artifacts of a public repository are downloadable by any GitHub user. So the plan is packed with run metadata, **encrypted with AES-256 (OpenSSL, PBKDF2)** using the secret `TF_PLAN_ENCRYPTION_KEY`, and only then uploaded, and only after a successful plan. The unencrypted plan and `plan.log` are never uploaded.
+3. The SHA-256 of the encrypted file is a job output (a different channel from the artifact store). Job 6 refuses the artifact if the digest differs, if it is missing, if decryption fails, or if the metadata names a different commit or run. Each failure ends with "Nothing was applied."
+4. Job 6 applies `tfplan` itself (`terraform apply tfplan`), not a fresh plan. Terraform rejects a saved plan whose state is stale, so a change between plan and approval fails instead of applying something unreviewed. Re-run the workflow to re-plan.
+5. Both jobs use the same backend (`TF_STATE_BUCKET`, `TF_STATE_KEY`), `-lockfile=readonly`, the repository root as working directory, and the same `TF_VAR_*` repository variables. The plan embeds its variable values. Both check that the workspace is `default`.
+6. Logs and the run summary show only resource **addresses and actions**, never attribute values. Terraform masks `sensitive` values in its own output.
+7. Plan artifacts expire after 5 days; the artifact name includes the commit SHA and run ID.
+8. Concurrency: runs for `main` are never cancelled (one may be applying); the apply job also holds the group `terraform-state-lab`.
+
+## Authentication
+
+### Preferred: GitHub OIDC with two roles
+
+Short-lived credentials, no stored keys. Use **two roles** so the job that runs on every push to `main` has no write access.
+
+1. **OIDC provider** (once per account):
    ```bash
-   aws iam create-open-id-connect-provider \
-     --url https://token.actions.githubusercontent.com \
-     --client-id-list sts.amazonaws.com
+   aws iam create-open-id-connect-provider --url https://token.actions.githubusercontent.com --client-id-list sts.amazonaws.com
    ```
-   (Skip if it exists: `aws iam list-open-id-connect-providers`.)
-2. **Create a role** with this trust policy (replace `ACCOUNT_ID`, `OWNER`, `REPO`). It limits assumption to this repo; the `environment` entries cover jobs that use a GitHub Environment (apply/destroy), the `pull_request` entry covers plans on PRs, and `ref:refs/heads/main` covers manual plans from main:
+2. **Plan role** (`AWS_PLAN_ROLE_ARN`). Job 5 has no Environment, so its token subject is the branch ref. Trust policy (replace `ACCOUNT_ID`, `OWNER`, `REPO`):
    ```json
    {
      "Version": "2012-10-17",
@@ -20,37 +58,48 @@ Credentials are **never** stored in this repo. Workflows reference them by name 
        "Principal": { "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com" },
        "Action": "sts:AssumeRoleWithWebIdentity",
        "Condition": {
-         "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
-         "StringLike": {
-           "token.actions.githubusercontent.com:sub": [
-             "repo:OWNER/REPO:pull_request",
-             "repo:OWNER/REPO:ref:refs/heads/main",
-             "repo:OWNER/REPO:environment:lab"
-           ]
+         "StringEquals": {
+           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+           "token.actions.githubusercontent.com:sub": "repo:OWNER/REPO:ref:refs/heads/main"
          }
        }
      }]
    }
    ```
-3. **Permissions.** No verified minimal policy exists for this stack yet, because it has never been planned or applied. Do not use `AdministratorAccess` as the long-term answer. A workable approach:
-   - **Plan role** (trusted for `pull_request` and `ref:refs/heads/main`): the AWS-managed `ReadOnlyAccess` policy plus read/write on the state bucket and its `.tflock` object. Planning only reads.
-   - **Apply/destroy role** (trusted only for `environment:lab`): start broad enough to create the services in this repo (EC2, VPC, ELBv2, AutoScaling, RDS, CloudFront, ACM, Route 53, IAM, CloudWatch/Logs, SNS, Secrets Manager read), run one apply in a sandbox account, then replace it with a policy generated from CloudTrail by IAM Access Analyzer. Restrict `iam:PassRole` and role/instance-profile management to the `<project>-<env>-*` names this stack creates.
-   - Expect the first apply in a fresh account to need `iam:CreateServiceLinkedRole` (ELB, Auto Scaling, RDS). CloudFront create actions generally cannot be resource-scoped. Treat the exact list as unverified until a real apply has been recorded in CloudTrail.
-4. **Repository variable** (Settings → Secrets and variables → Actions → *Variables*): `AWS_ROLE_ARN` = the role ARN (not secret).
+   There is intentionally no `pull_request` subject. Permissions: the AWS-managed `ReadOnlyAccess` policy, plus `s3:ListBucket` on the state bucket and `s3:GetObject`/`PutObject` on the state key and its `.tflock` object (the S3 backend writes a lock file even for plans; the workflow uses `-lock=false`, but `init` still needs read access).
+3. **Apply role** (`AWS_APPLY_ROLE_ARN`, also used by `terraform-destroy.yml`). Job 6 declares `environment: lab`, so its subject becomes the Environment. Same trust policy with `"token.actions.githubusercontent.com:sub": "repo:OWNER/REPO:environment:lab"`. Permissions: see below.
+4. **Repository variables** (not secret): `AWS_PLAN_ROLE_ARN`, `AWS_APPLY_ROLE_ARN`. A single `AWS_ROLE_ARN` is accepted as a fallback for both, which is not recommended.
 
-## Option B (fallback): existing GitHub secrets
+**Apply-role permissions.** No verified minimal policy exists, because the stack has never been planned or applied. Do not make `AdministratorAccess` permanent. Start broad enough for EC2, VPC, ELBv2, Auto Scaling, RDS, CloudFront, ACM, Route 53, IAM (restricted to `<project>-<env>-*` role and instance-profile names, with `iam:PassRole` limited to those), CloudWatch/Logs, SNS, Secrets Manager (read), and the state bucket; apply once in a sandbox account; then replace it with a policy generated from CloudTrail by IAM Access Analyzer. Expect `iam:CreateServiceLinkedRole` on first use of ELB, Auto Scaling and RDS in an account. CloudFront create actions generally cannot be resource-scoped.
 
-If you already store access keys, name them exactly: **secrets** `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Leave `AWS_ROLE_ARN` unset and the composite action `.github/actions/aws-auth` uses them (with a warning). If your secrets have other names, edit the three `secrets.AWS_*` references in the workflows. Use a dedicated least-privilege IAM user, rotate regularly. Long-lived keys cannot be scoped to a branch or environment as OIDC can.
+**Verify the AWS side instead of assuming it** (read-only; run with working credentials):
 
-## Other repository variables (all optional, none secret)
+```bash
+aws iam list-open-id-connect-providers
+aws iam get-open-id-connect-provider --open-id-connect-provider-arn <ARN> --query '{Url:Url,ClientIDList:ClientIDList}'
+aws iam get-role --role-name <PLAN_ROLE> --query 'Role.AssumeRolePolicyDocument'     # sub must be ...:ref:refs/heads/main
+aws iam get-role --role-name <APPLY_ROLE> --query 'Role.AssumeRolePolicyDocument'    # sub must be ...:environment:lab
+aws iam list-attached-role-policies --role-name <PLAN_ROLE>
+```
 
-| Variable | Purpose |
-|---|---|
-| `TF_STATE_BUCKET` | S3 bucket for remote state. **Required for apply/destroy**; if unset, CI plan starts from empty state (shows everything as "create"). |
-| `TF_STATE_KEY` | State key, default `ha-web/lab/terraform.tfstate` |
-| `TF_VAR_DOMAIN_NAME`, `TF_VAR_HOSTED_ZONE_NAME` | Set **both** for a custom domain (e.g. `app.example.com` / `example.com`) |
+Checks to read off those outputs: the provider URL is `https://token.actions.githubusercontent.com`; `ClientIDList` contains `sts.amazonaws.com` (the audience `aws-actions/configure-aws-credentials` requests); each trust policy names exactly the subject above for the right role; the plan role has no write permissions. A correctly formatted role ARN does **not** prove the role exists or trusts this repository. The composite action `.github/actions/aws-auth` only validates the ARN's format; only a real run (`sts:AssumeRoleWithWebIdentity`) shows that authentication works, and none has run.
 
-### Create the state bucket (once, outside this stack)
+### Fallback: long-lived access keys
+
+Leave the `*_ROLE_ARN` variables unset and the action uses secrets named exactly `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (with a warning in the log). To limit the damage, store **read-only** keys as repository secrets (used by job 5) and the **apply-capable** keys as secrets of the `lab` Environment. Environment secrets with the same names override repository secrets for jobs that use that Environment. Otherwise anyone who can push to `main` can run a modified workflow that exposes the apply keys. Rotate regularly.
+
+## Repository variables and secrets
+
+| Name | Kind | Required for | Purpose |
+|---|---|---|---|
+| `AWS_PLAN_ROLE_ARN`, `AWS_APPLY_ROLE_ARN` | variable | OIDC | roles above (or `AWS_ROLE_ARN` for both) |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | secret | key fallback | see above |
+| `TF_STATE_BUCKET` | variable | push plan, apply | S3 state bucket. Push runs fail with a clear error without it. |
+| `TF_STATE_KEY` | variable | optional | default `ha-web/lab/terraform.tfstate` |
+| `TF_PLAN_ENCRYPTION_KEY` | **secret** | push plan, apply | encrypts the plan artifact. Generate with `openssl rand -base64 48`; keep a copy: rotating it between plan and apply makes that run's apply fail (re-run). |
+| `TF_VAR_DOMAIN_NAME`, `TF_VAR_HOSTED_ZONE_NAME` | variable | optional | set **both** or neither |
+
+### State bucket (once, outside this stack)
 
 ```bash
 B=<globally-unique-name>
@@ -59,33 +108,35 @@ aws s3api put-public-access-block --bucket $B --public-access-block-configuratio
 aws s3api put-bucket-versioning --bucket $B --versioning-configuration Status=Enabled
 aws s3api put-bucket-encryption --bucket $B --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
 ```
-The role needs `s3:ListBucket` on the bucket and `s3:GetObject/PutObject/DeleteObject` on the state key and its `.tflock` file (native locking, Terraform ≥ 1.10).
 
-## GitHub Environment (approval gate for apply/destroy)
+The apply role needs `s3:ListBucket` plus `GetObject`/`PutObject`/`DeleteObject` on the state key and its `.tflock` object (native locking, Terraform ≥ 1.10).
 
-Settings → Environments → **New environment** `lab` → enable **Required reviewers** (add yourself/team) and restrict deployment branches to `main`. The apply/destroy jobs declare `environment: lab`, so they pause for approval. If the environment doesn't exist GitHub creates it **without** protection — create it first.
+## GitHub Environment `lab` (the approval gate)
 
-### What actually protects apply and destroy
+Settings → Environments → **New environment** `lab`, then:
 
-The typed phrase and the `main`-only check in the first job are guard rails against mistakes, not security boundaries: a dispatch from another branch runs *that branch's* copy of the workflow. The controls that hold are:
+- **Required reviewers**: add yourself or a team. Consider enabling "Prevent self-review" if more than one person can approve.
+- **Deployment branches and tags**: *Selected branches* → `main` only.
+- Put the apply-capable key secrets here if you use the key fallback.
 
-1. the `lab` Environment's required reviewers and **deployment-branch restriction to `main`**;
-2. the IAM role's trust policy accepting only `repo:OWNER/REPO:environment:lab` for the apply role;
-3. branch protection on `main`, so workflow files cannot change without review.
+Create it **before** the first push that produces a plan with changes. If the Environment does not exist when job 6 starts, GitHub creates it with no protection and the apply would proceed without approval. Check the configuration at any time:
 
-Any pull request opened from a branch in this repository can obtain the *plan* role's credentials through OIDC (the `pull_request` subject), because the workflow file in the PR is the one that runs. That is why the plan role must be read-only.
+```bash
+gh api repos/OWNER/REPO/environments/lab --jq '{reviewers: [.protection_rules[] | select(.type=="required_reviewers")], branches: .deployment_branch_policy}'
+```
 
-## Workflow behavior
+At the time of the review that call returned `total_count: 0` for this repository: the Environment did not exist.
 
-| Workflow | Jobs (as shown in the Actions UI) |
-|---|---|
-| Terraform CI | 3 Init, validate, lint & test (fmt, TFLint, `terraform test`) · 4 Security scan (Checkov) · 5 Terraform plan · 6 Terraform apply (auto-approve; manual run with *apply* ticked only; Environment-gated) |
-| Terraform Destroy (manual) | 1 Validate inputs · 2 Destroy (Environment-gated) |
+Also enable branch protection on `main` (require pull requests and the "Terraform CI" checks). The workflow file is part of what runs on a push, so anyone who can push to `main` can change the pipeline; branch protection and the Environment's reviewers are the real controls, not anything inside the workflow.
 
-- Plan jobs run with `-lock=false` (a PR plan only reads state and must not block or strand a lock). `terraform init -lockfile=readonly` makes CI fail if `.terraform.lock.hcl` lacks a hash for the runner's platform.
-- CI runs on PRs/pushes; **plan** runs on same-repo PRs and manual dispatch (fork PRs have no secrets/OIDC, so plan is skipped, not failed).
-- Apply (job 6 of `terraform.yml`) and destroy (`terraform-destroy.yml`): `workflow_dispatch` only, from `main`, with the typed phrases `APPLY us-east-1` / `DESTROY us-east-1`, remote state required. They share the concurrency group `terraform-state-lab`, which never cancels a running job.
-- Job 6 runs `terraform apply -auto-approve` against the current configuration. It does **not** apply the exact plan from job 5 (the binary plan is deliberately not passed between jobs), so anything that changed in AWS or the variables between the two jobs is applied without further review. The Environment approval is the last human checkpoint.
-- Plan output is uploaded only as a text log (7 days); the binary plan is never uploaded. Terraform masks `sensitive` values, but anyone with repo read access can download artifacts and read job logs. **In a public repository that is everyone**, and plan output contains resource names and ARNs (including your AWS account ID). Keep the repository private, or do not run the plan/apply jobs until you accept that exposure.
-- Third-party actions are pinned to full commit SHAs with the release in a trailing comment. Each SHA was checked against the upstream tag with `git ls-remote` (all are lightweight tags, so the SHA is the commit). Update them deliberately, e.g. with Dependabot's `github-actions` ecosystem.
-- Terraform pinned to `1.16.2` (the version used for local validation) and Checkov to `3.3.29`.
+## Reading a failed or skipped run
+
+Job 7 ("Workflow summary") always runs, lists every job with its result and a note for each skip, and fails with "First failing prerequisite: …". **Skipped is not failed**: plan is skipped on pull requests by design, and apply is skipped when the plan has no changes. Start at the first failed job in the table.
+
+## Pinned versions
+
+Third-party actions are pinned to full commit SHAs with the release in a trailing comment (checked against the upstream tags with `git ls-remote`; `scripts/check_workflows.py` fails on any unpinned reference). Terraform is pinned to `1.16.2`, Checkov to `3.3.29`, TFLint to `v0.64.0`, PyYAML to `6.0.2`. Update deliberately (Dependabot's `github-actions` ecosystem works for the action SHAs).
+
+## Public repositories
+
+Job logs and artifacts of a public repository are readable by everyone. Plan output (addresses, and error text) can include resource names and your AWS account ID. The plan artifact is encrypted, and logs show only addresses and actions, but a private repository is still the safer home for a pipeline that deploys real infrastructure.

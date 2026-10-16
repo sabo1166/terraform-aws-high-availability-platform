@@ -57,13 +57,23 @@ This round:
 - **New CI steps:** Markdown link check; TFLint (`terraform-linters/setup-tflint` pinned to the verified `v6.3.2` commit).
 - Docs now state that the typed phrase and `main`-only check are guard rails, and that the Environment's branch restriction, the role trust policy and branch protection are what actually protect apply/destroy. They also state that any in-repo PR can obtain the *plan* role through OIDC, so that role must be read-only.
 
-## 3a. Workflow restructure (after the checks above)
+## 3a. Workflow review: skipped jobs, redesign, tests
 
-At the owner's request `terraform.yml` was reduced to jobs 3 (init, validate, lint & test, now including `terraform fmt -check`), 4 (Checkov), 5 (plan) and a new job 6 (`terraform apply -auto-approve`). Job 6 runs only on a manual run with *apply* ticked, from `main`, with the typed phrase and remote state, behind the `lab` Environment. `terraform-apply.yml` was removed as redundant; `terraform-destroy.yml` is unchanged.
+**Evidence for the skipped jobs.** GitHub's public API for the repository (unauthenticated) showed two completed runs, both on push to `main` (`c89e31a`, `0b11d50`), both `success`. In `0b11d50`, jobs 3 and 4 succeeded and **plan and apply were skipped** (conclusion `skipped`, not `failure`). Causes: plan's `if:` admitted only `workflow_dispatch` or same-repo `pull_request`, never a push; apply `needs` plan and also required `workflow_dispatch` with an `apply` input. The API also reported `environments.total_count = 0`: no `lab` Environment, hence no required reviewers, existed. These are observations of GitHub's records, not results of this review's own runs.
 
-Re-run after this change: `actionlint` exit 0, `terraform fmt -check` exit 0, `terraform validate` success, `terraform test` 12 of 12, `check_links.py` 0 broken. The workflow has **not run on GitHub**.
+**Redesign** (`terraform.yml`; `terraform-destroy.yml` only changed its role variable): jobs 1-7 as separate jobs. Pull requests to `main` run static checks only; push to `main` runs checks, plan, and apply of the saved plan if it has changes (Environment `lab`); manual runs plan only. Plan artifact is AES-256 encrypted, its digest travels as a job output, and apply refuses a missing, tampered, undecryptable, wrong-commit or wrong-run plan. No `always()` outside the summary job. No `-auto-approve` anywhere in `terraform.yml`. Full description and the PR-planning decision: `docs/GITHUB_ACTIONS.md`.
 
-Coverage dropped by design: the repository-checks job (required files, forbidden tracked files, credential-pattern scan, Markdown links) and the summary job no longer exist in CI. `scripts/check_links.py` remains for local use; enable GitHub secret scanning and push protection to replace the credential-pattern scan. Job 6 applies the current configuration with `-auto-approve`, not the saved plan from job 5.
+**Tests run locally for this change:**
+
+| Check | Result |
+|---|---|
+| `scripts/check_workflows.py` (policy assertions + simulation of `needs`/`if` over 17 named scenarios and 2,880 event/branch/outcome combinations) | OK. Invariants: apply never runs on `pull_request`; apply runs only for a push to `main` with a successful plan that has changes; no plan after a failed check; no apply after a failed plan |
+| Mutation tests of that script (apply allowed on PRs; plan allowed on PRs; unpinned action; `-auto-approve`; Environment removed; plan no longer needing Checkov; `always()` on plan) | all 7 rejected; unmodified control accepted |
+| Encrypt / digest / decrypt / metadata logic from jobs 5 and 6, run locally with OpenSSL 3.5.6 and a stand-in plan file | correct inputs accepted; wrong key, wrong commit, wrong run id, tampered artifact and empty expected digest all rejected; plaintext not visible in the encrypted file |
+| `actionlint` (shellcheck active) on both workflows; `shellcheck` on the composite action's steps | exit 0 |
+| `terraform fmt`, `init -lockfile=readonly`, `validate`, `terraform test` (12 of 12), TFLint, Checkov (235 passed, 0 failed, 32 skipped), link check | pass |
+
+The simulator evaluates only the expression subset used in the workflows (it rejects anything else), so it checks this repository's conditions, not GitHub's evaluator in general. **The redesigned workflow has not run on GitHub**, and no AWS authentication has been tested: the OIDC provider, roles, trust policies, secrets, variables and the `lab` Environment are not configured (Environment reviewers: not verified beyond the zero-count observation above).
 
 ## 3b. Final review from a fresh clone (before the second push)
 

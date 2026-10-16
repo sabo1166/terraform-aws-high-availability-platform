@@ -13,11 +13,12 @@ Everything below is a manual step; nothing here has been done for you. `[ ]` ite
 ## Repository settings (GitHub UI)
 
 - [ ] Settings → Actions → General: set workflow permissions to **read** by default; require approval for workflows from outside collaborators.
-- [ ] Settings → Environments → **New environment `lab`**: add *Required reviewers*, restrict to branch `main`. Create it before the first apply/destroy run, otherwise GitHub creates an unprotected one.
+- [ ] Settings → Environments → **New environment `lab`**: add *Required reviewers*, restrict to branch `main`. **Create it before the first push that has plan changes**; if it does not exist when the apply job starts, GitHub creates an unprotected one and the apply proceeds without approval. (At review time the API reported zero Environments.)
 - [ ] Settings → Branches: protect `main` (require PR, require the *Terraform CI* checks).
 - [ ] Settings → Code security: enable secret scanning and push protection; enable Dependabot for `github-actions`.
-- [ ] Authentication (see [`GITHUB_ACTIONS.md`](GITHUB_ACTIONS.md)): prefer OIDC (`AWS_ROLE_ARN` repository **variable**). Use `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` secrets only as a fallback. Never paste credentials into issues, logs or chat.
-- [ ] Optional variables: `TF_STATE_BUCKET`, `TF_STATE_KEY`, `TF_VAR_DOMAIN_NAME`, `TF_VAR_HOSTED_ZONE_NAME`.
+- [ ] Authentication (see [`GITHUB_ACTIONS.md`](GITHUB_ACTIONS.md)): prefer OIDC with two roles (repository **variables** `AWS_PLAN_ROLE_ARN`, `AWS_APPLY_ROLE_ARN`). Trust policy subjects: plan role `...:ref:refs/heads/main`, apply role `...:environment:lab`; verify them with the read-only `aws iam get-role` commands in that file. Use `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` secrets only as a fallback. Never paste credentials into issues, logs or chat.
+- [ ] Variables: `TF_STATE_BUCKET` (**required** for the main-branch plan and apply), optional `TF_STATE_KEY`, `TF_VAR_DOMAIN_NAME`, `TF_VAR_HOSTED_ZONE_NAME`.
+- [ ] Secret `TF_PLAN_ENCRYPTION_KEY` (**required**; `openssl rand -base64 48`). Without it, every push to `main` fails at job 5 with an explicit message.
 
 ## Checks to run with working AWS credentials (not done yet)
 
@@ -40,7 +41,8 @@ Do not run `terraform apply` until the AMI is confirmed and you have read `COST_
 
 ## After the first push
 
-- [ ] Open a PR; confirm jobs 3 (init/validate/lint/test), 4 (Checkov) and 5 (plan) appear and job 6 (apply) is skipped.
-- [ ] Confirm the plan job authenticates (OIDC) without printing credentials, and that the uploaded artifact is the text log only.
-- [ ] Confirm job 6 (apply) runs only from *Actions → Terraform CI → Run workflow* with *apply* ticked, and pauses for Environment approval. `terraform apply -auto-approve` has no further prompt after that approval.
-- [ ] Only then add the README status line about what was actually deployed, with evidence.
+- [ ] Open a pull request into `main`: jobs 1-4 and 7 run; jobs 5 and 6 show **skipped** (by design); no AWS access is used.
+- [ ] After merging, a push to `main` runs 1-5 and, if the plan has changes, pauses job 6 for Environment approval. Check the run summary: it lists resource addresses and actions only, never values.
+- [ ] Confirm no credentials appear in any log, and that the only artifact is `tfplan-<sha>-<run>` (an encrypted `.enc` file).
+- [ ] Confirm a manual run from *Actions → Terraform CI → Run workflow* plans but never applies.
+- [ ] Only then add a README status line about what was actually deployed, with evidence.

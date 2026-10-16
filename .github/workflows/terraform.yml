@@ -1,28 +1,24 @@
 name: Terraform CI
 
-# Push / PR: jobs 3-4 (and 5 on same-repo PRs). Manual run with "apply" ticked: jobs 3-6.
-# Apply never runs on push or PR. Teardown is a separate manual workflow (terraform-destroy.yml).
+# Pull request to main : jobs 1-4 only (static checks). No AWS access, no plan, no apply.
+# Push to main         : jobs 1-4, then 5 (plan) and, if the plan has changes, 6 (apply of THAT plan,
+#                        after approval on the "lab" Environment).
+# Manual dispatch      : jobs 1-5 from the default branch (plan only; never applies).
+# Job 7 always reports. A "skipped" job is not a failed job; see scripts/check_workflows.py for the
+# tested event/dependency matrix. Destroy is a separate manual workflow (terraform-destroy.yml).
 on:
   pull_request:
+    branches: [main]
   push:
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      apply:
-        description: Apply after a successful plan (BILLABLE; main only; needs remote state)
-        type: boolean
-        default: false
-      confirmation:
-        description: 'Required when apply is ticked. Type exactly: APPLY us-east-1'
-        type: string
-        required: false
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
 concurrency:
   group: terraform-ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }} # never cancel a push or a running apply
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }} # never cancel a push run: it may be applying
 
 env:
   TF_VERSION: "1.16.2" # the version this repo was validated with locally
@@ -31,6 +27,74 @@ env:
   AWS_REGION: us-east-1
 
 jobs:
+  repository-checks:
+    name: "1 - Repository & configuration checks"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Install PyYAML (pinned) for the workflow policy test
+        run: pip install --disable-pip-version-check "pyyaml==6.0.2"
+
+      - name: Required files exist
+        run: |
+          missing=0
+          for f in versions.tf variables.tf outputs.tf .gitignore .gitattributes README.md terraform.tfvars.example \
+                   docs/ARCHITECTURE.md docs/TROUBLESHOOTING.md docs/COST_AND_CLEANUP.md \
+                   docs/VALIDATION_REPORT.md docs/GITHUB_ACTIONS.md docs/PUBLISHING_CHECKLIST.md \
+                   LICENSE .tflint.hcl scripts/check_links.py scripts/check_workflows.py; do
+            if [ -f "$f" ]; then echo "ok       $f"; else echo "::error file=$f::Required file is missing"; missing=1; fi
+          done
+          exit $missing
+
+      - name: No forbidden files committed (state, plans, tfvars, keys)
+        run: |
+          bad=$(git ls-files | grep -E '(\.tfstate(\.|$)|\.tfplan$|^tfplan$|(^|/)terraform\.tfvars$|\.auto\.tfvars$|\.pem$|(^|/)id_rsa)' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Forbidden files are tracked by git:"; echo "$bad"; exit 1
+          fi
+          echo "No forbidden files tracked."
+
+      - name: Scan for obvious credential patterns (file names only, contents never printed)
+        run: |
+          # Bracket tricks keep this workflow from matching its own patterns.
+          hits=$(grep -rIlE --exclude-dir=.git --exclude-dir=.terraform \
+            -e 'AKI[A][0-9A-Z]{16}' -e 'ASI[A][0-9A-Z]{16}' \
+            -e 'BEGIN [A-Z ]*PRIVATE KE[Y]' \
+            -e 'aws_secret_access_ke[y][[:space:]]*=' . || true)
+          if [ -n "$hits" ]; then
+            echo "::error::Possible credentials found in these files (contents not shown):"
+            echo "$hits"
+            exit 1
+          fi
+          echo "No obvious credential patterns found."
+
+      - name: Relative Markdown links resolve
+        run: python scripts/check_links.py
+
+      - name: Workflow policy and event/dependency matrix
+        run: python scripts/check_workflows.py
+
+  terraform-format:
+    name: "2 - Terraform format"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - name: terraform fmt -check
+        run: |
+          if ! terraform fmt -check -recursive -diff -no-color; then
+            echo "::error title=Formatting::The files listed above are not formatted. Run 'terraform fmt -recursive' locally and commit."
+            exit 1
+          fi
+
   terraform-init-validate:
     name: "3 - Terraform init, validate, lint & test"
     runs-on: ubuntu-latest
@@ -43,12 +107,6 @@ jobs:
           terraform_wrapper: false
       - name: Versions
         run: terraform version
-      - name: terraform fmt -check
-        run: |
-          if ! terraform fmt -check -recursive -diff -no-color; then
-            echo "::error title=Formatting::The files listed above are not formatted. Run 'terraform fmt -recursive' locally and commit."
-            exit 1
-          fi
       - name: terraform init (no backend, lock file must already be complete)
         run: terraform init -backend=false -input=false -no-color -lockfile=readonly
       - name: Provider versions
@@ -85,16 +143,19 @@ jobs:
 
   terraform-plan:
     name: "5 - Terraform plan"
-    needs: [terraform-init-validate, terraform-security-scan]
-    # Fork PRs get neither secrets nor OIDC, so they skip planning.
+    # No always(): a failed or skipped prerequisite skips this job. Pull requests never reach it.
+    needs: [repository-checks, terraform-format, terraform-init-validate, terraform-security-scan]
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
       id-token: write # OIDC token for aws-actions/configure-aws-credentials
+    outputs:
+      has_changes: ${{ steps.plan.outputs.has_changes }}
+      plan_sha256: ${{ steps.package.outputs.plan_sha256 }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
@@ -102,10 +163,27 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
 
-      - name: Authenticate to AWS
+      - name: Check required configuration before touching AWS
+        env:
+          EVENT: ${{ github.event_name }}
+          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          PLAN_KEY: ${{ secrets.TF_PLAN_ENCRYPTION_KEY }}
+        run: |
+          if [ "$EVENT" = "push" ]; then
+            # A push plan feeds the apply job, so it needs shared state and an artifact key.
+            if [ -z "$STATE_BUCKET" ]; then
+              echo "::error title=Remote state required::Set repository variable TF_STATE_BUCKET. A plan from empty local state would try to create everything again."; exit 1
+            fi
+            if [ -z "$PLAN_KEY" ]; then
+              echo "::error title=Plan encryption key missing::Set repository secret TF_PLAN_ENCRYPTION_KEY (e.g. output of: openssl rand -base64 48). The plan file can contain secrets and is never uploaded unencrypted."; exit 1
+            fi
+          fi
+          echo "Configuration present."
+
+      - name: Authenticate to AWS (plan role)
         uses: ./.github/actions/aws-auth
         with:
-          role-arn: ${{ vars.AWS_ROLE_ARN }}
+          role-arn: ${{ vars.AWS_PLAN_ROLE_ARN || vars.AWS_ROLE_ARN }}
           access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
@@ -126,51 +204,89 @@ jobs:
         run: |
           if [ -n "$STATE_BUCKET" ]; then
             cp backend.tf.example backend.tf
-            terraform init -input=false -no-color \
+            terraform init -input=false -no-color -lockfile=readonly \
               -backend-config="bucket=$STATE_BUCKET" \
               -backend-config="key=${STATE_KEY:-ha-web/lab/terraform.tfstate}" \
               -backend-config="region=us-east-1"
           else
-            echo "::warning title=No remote state::Repository variable TF_STATE_BUCKET is unset. This plan starts from EMPTY state, so it shows everything as 'create'. Apply is blocked without remote state."
-            terraform init -input=false -no-color
+            echo "::warning title=No remote state::TF_STATE_BUCKET is unset. This manual plan starts from EMPTY state and shows everything as 'create'."
+            terraform init -input=false -no-color -lockfile=readonly
+          fi
+
+      - name: Check workspace
+        run: |
+          ws=$(terraform workspace show)
+          if [ "$ws" != "default" ]; then
+            echo "::error title=Unexpected workspace::Selected workspace is '$ws'; this project uses only 'default'."; exit 1
           fi
 
       - name: terraform plan
+        id: plan
         run: |
-          set -o pipefail
-          # -lock=false: a plan only reads state, so it must not contend with (or strand a lock for)
-          # a running apply. Sensitive values print as "(sensitive value)". The binary plan file is
-          # deliberately NOT uploaded; it may hold secrets.
-          terraform plan -input=false -no-color -lock=false 2>&1 | tee plan.log
+          # -lock=false: planning only reads state and must not block (or strand a lock for) an apply.
+          # -detailed-exitcode: 0 = no changes, 2 = changes, 1 = error.
+          set +e
+          terraform plan -input=false -no-color -lock=false -detailed-exitcode -out=tfplan > plan.log 2>&1
+          rc=$?
+          set -e
+          case "$rc" in
+            0) echo "has_changes=false" >> "$GITHUB_OUTPUT"; echo "No changes. Infrastructure matches the configuration." ;;
+            2) echo "has_changes=true" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error title=terraform plan failed::Exit code $rc. Last lines of the Terraform output follow (sensitive values are masked by Terraform)."
+              tail -n 60 plan.log
+              exit 1
+              ;;
+          esac
 
-      - name: Plan summary
-        if: always()
+      - name: Plan summary (resource addresses and actions only; no attribute values)
+        if: steps.plan.outputs.has_changes == 'true'
         run: |
           {
             echo "### Terraform plan (us-east-1)"
             echo '```'
-            grep -E '^(Plan:|No changes|Error:)' plan.log || echo "(no plan summary line found - see the step log)"
+            grep -E '^Plan:' plan.log || true
+            terraform show -json tfplan \
+              | jq -r '.resource_changes[]? | select((.change.actions | join(",")) as $a | $a != "no-op" and $a != "read") | "\(.change.actions | join("+"))  \(.address)"' \
+              | head -n 200
             echo '```'
+            echo "Full plan values are intentionally not shown. They are in the encrypted plan artifact that job 6 applies."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload sanitized plan log (text only, 7 days)
-        if: always()
+      - name: Encrypt plan (the plan file can contain secret state values)
+        id: package
+        if: steps.plan.outputs.has_changes == 'true' && github.event_name == 'push'
+        env:
+          PLAN_KEY: ${{ secrets.TF_PLAN_ENCRYPTION_KEY }}
+        run: |
+          printf 'sha=%s\nrun_id=%s\nrun_attempt=%s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > plan.meta
+          tar -cf plan.tar tfplan plan.meta
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:PLAN_KEY -in plan.tar -out plan.tar.enc
+          # The digest travels as a job output (a different channel from the artifact), so job 6 can
+          # detect a swapped or corrupted artifact.
+          echo "plan_sha256=$(sha256sum plan.tar.enc | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          rm -f plan.tar
+
+      - name: Upload encrypted plan artifact (runs only after a successful plan)
+        if: steps.plan.outputs.has_changes == 'true' && github.event_name == 'push'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: terraform-plan-log
-          path: plan.log
-          retention-days: 7
-          if-no-files-found: ignore
+          name: tfplan-${{ github.sha }}-${{ github.run_id }}
+          path: plan.tar.enc
+          retention-days: 5
+          if-no-files-found: error
 
   terraform-apply:
-    name: "6 - Terraform apply (auto-approve)"
+    name: "6 - Terraform apply (saved plan)"
+    # Never on pull_request. Only a push to the default branch, only when job 5 found changes.
     needs: [terraform-plan]
-    # Only a manual run with "apply" ticked, from main. Never on push or pull_request. Checking the
-    # branch here (not in a step) means a run from another branch is skipped before any approval request.
-    if: github.event_name == 'workflow_dispatch' && inputs.apply && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name == 'push' &&
+      github.ref_name == github.event.repository.default_branch &&
+      needs.terraform-plan.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90 # Multi-AZ RDS + CloudFront can take 30+ minutes
-    environment: lab # required-reviewer gate lives here (create it with reviewers; see docs/GITHUB_ACTIONS.md)
+    environment: lab # required reviewers must be configured on this Environment (docs/GITHUB_ACTIONS.md)
     concurrency:
       group: terraform-state-lab
       cancel-in-progress: false
@@ -178,64 +294,144 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Check branch and confirmation phrase
-        env:
-          CONFIRMATION: ${{ inputs.confirmation }}
-          REF: ${{ github.ref }}
-        run: |
-          if [ "$REF" != "refs/heads/main" ]; then
-            echo "::error title=Wrong branch::Apply may only run from main (got $REF)."; exit 1
-          fi
-          if [ "$CONFIRMATION" != "APPLY us-east-1" ]; then
-            echo "::error title=Confirmation mismatch::Type exactly: APPLY us-east-1"; exit 1
-          fi
-
-      - name: Require remote state
-        env:
-          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-        run: |
-          if [ -z "$STATE_BUCKET" ]; then
-            echo "::error title=Remote state required::Set repository variable TF_STATE_BUCKET. Applying with runner-local state would orphan the resources."
-            exit 1
-          fi
-
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
 
-      - name: Authenticate to AWS
+      - name: Download the plan produced by this run
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tfplan-${{ github.sha }}-${{ github.run_id }}
+
+      - name: Verify, decrypt and unpack the plan
+        env:
+          DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          EXPECTED_SHA256: ${{ needs.terraform-plan.outputs.plan_sha256 }}
+          PLAN_KEY: ${{ secrets.TF_PLAN_ENCRYPTION_KEY }}
+        run: |
+          if [ "$DOWNLOAD_OUTCOME" != "success" ] || [ ! -f plan.tar.enc ]; then
+            echo "::error title=Plan artifact missing::No artifact tfplan-${GITHUB_SHA}-${GITHUB_RUN_ID}. It expires after 5 days, so re-run the whole workflow to produce a fresh plan. Nothing was applied."; exit 1
+          fi
+          actual=$(sha256sum plan.tar.enc | cut -d' ' -f1)
+          if [ -z "$EXPECTED_SHA256" ] || [ "$actual" != "$EXPECTED_SHA256" ]; then
+            echo "::error title=Plan artifact digest mismatch::The downloaded artifact is not the one job 5 produced. Nothing was applied."; exit 1
+          fi
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:PLAN_KEY -in plan.tar.enc | tar -xf -
+          # shellcheck disable=SC1091
+          . ./plan.meta
+          if [ "$sha" != "$GITHUB_SHA" ] || [ "$run_id" != "$GITHUB_RUN_ID" ]; then
+            echo "::error title=Plan is for a different commit or run::Plan sha=$sha run=$run_id, this run is $GITHUB_SHA / $GITHUB_RUN_ID. Nothing was applied."; exit 1
+          fi
+          echo "Plan verified: same commit and same run as this job."
+
+      - name: Authenticate to AWS (apply role)
         uses: ./.github/actions/aws-auth
         with:
-          role-arn: ${{ vars.AWS_ROLE_ARN }}
+          role-arn: ${{ vars.AWS_APPLY_ROLE_ARN || vars.AWS_ROLE_ARN }}
           access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-      - name: Optional inputs from repository variables
-        env:
-          V_DOMAIN: ${{ vars.TF_VAR_DOMAIN_NAME }}
-          V_ZONE: ${{ vars.TF_VAR_HOSTED_ZONE_NAME }}
-        run: |
-          [ -n "$V_DOMAIN" ] && echo "TF_VAR_domain_name=$V_DOMAIN" >> "$GITHUB_ENV"
-          [ -n "$V_ZONE" ] && echo "TF_VAR_hosted_zone_name=$V_ZONE" >> "$GITHUB_ENV"
-          exit 0
-
-      - name: terraform init
+      - name: terraform init (same backend, key and lock file as the plan)
         env:
           STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           STATE_KEY: ${{ vars.TF_STATE_KEY }}
         run: |
           cp backend.tf.example backend.tf
-          terraform init -input=false -no-color \
+          terraform init -input=false -no-color -lockfile=readonly \
             -backend-config="bucket=$STATE_BUCKET" \
             -backend-config="key=${STATE_KEY:-ha-web/lab/terraform.tfstate}" \
             -backend-config="region=us-east-1"
 
-      - name: terraform apply -auto-approve
-        run: terraform apply -input=false -no-color -auto-approve -lock-timeout=120s
+      - name: Check workspace
+        run: |
+          ws=$(terraform workspace show)
+          if [ "$ws" != "default" ]; then
+            echo "::error title=Unexpected workspace::Selected workspace is '$ws'; this project uses only 'default'."; exit 1
+          fi
+
+      - name: terraform apply (exactly the saved plan)
+        # Applying a plan file needs no -auto-approve and cannot silently produce a different plan:
+        # Terraform refuses it if state changed since it was created ("Saved plan is stale").
+        run: terraform apply -input=false -no-color -lock-timeout=120s tfplan
 
       - name: Public URL
         run: |
-          echo "### Applied" >> "$GITHUB_STEP_SUMMARY"
-          echo "Public URL: $(terraform output -raw public_url)" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Applied commit ${GITHUB_SHA}"
+            echo "Public URL: $(terraform output -raw public_url)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  workflow-summary:
+    name: "7 - Workflow summary"
+    needs:
+      - repository-checks
+      - terraform-format
+      - terraform-init-validate
+      - terraform-security-scan
+      - terraform-plan
+      - terraform-apply
+    if: always() # reporting only; it never plans or applies
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Summarize results and name the first failing prerequisite
+        env:
+          R_REPO: ${{ needs.repository-checks.result }}
+          R_FMT: ${{ needs.terraform-format.result }}
+          R_VAL: ${{ needs.terraform-init-validate.result }}
+          R_SEC: ${{ needs.terraform-security-scan.result }}
+          R_PLAN: ${{ needs.terraform-plan.result }}
+          R_APPLY: ${{ needs.terraform-apply.result }}
+          HAS_CHANGES: ${{ needs.terraform-plan.outputs.has_changes }}
+          EVENT: ${{ github.event_name }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          icon() { case "$1" in success) echo "✅ success";; skipped) echo "⏭️ skipped";; cancelled) echo "🚫 cancelled";; *) echo "❌ $1";; esac; }
+
+          # Why a skipped job was skipped, in plain words.
+          prereq_ok=true
+          for r in "$R_REPO" "$R_FMT" "$R_VAL" "$R_SEC"; do [ "$r" = "success" ] || prereq_ok=false; done
+          if [ "$R_PLAN" != "skipped" ]; then plan_note=""
+          elif [ "$prereq_ok" != "true" ]; then plan_note="a required check did not succeed"
+          elif [ "$EVENT" = "pull_request" ]; then plan_note="by design: pull requests run static checks only"
+          else plan_note="not the default branch"; fi
+          if [ "$R_APPLY" != "skipped" ]; then apply_note=""
+          elif [ "$R_PLAN" != "success" ]; then apply_note="plan did not succeed"
+          elif [ "$EVENT" != "push" ]; then apply_note="by design: apply runs only on a push to the default branch"
+          elif [ "$HAS_CHANGES" = "false" ]; then apply_note="plan found no changes"
+          else apply_note="not the default branch"; fi
+
+          {
+            echo "## Terraform CI summary"
+            echo ""
+            echo "| Job | Result | Note |"
+            echo "|---|---|---|"
+            echo "| 1 - Repository & configuration checks | $(icon "$R_REPO") | |"
+            echo "| 2 - Terraform format | $(icon "$R_FMT") | |"
+            echo "| 3 - Init, validate, lint & test | $(icon "$R_VAL") | |"
+            echo "| 4 - Security scan (Checkov) | $(icon "$R_SEC") | |"
+            echo "| 5 - Terraform plan | $(icon "$R_PLAN") | $plan_note |"
+            echo "| 6 - Terraform apply | $(icon "$R_APPLY") | $apply_note |"
+            echo ""
+            echo "- Event: \`${EVENT}\`, ref: \`${BRANCH}\`, commit: \`${GITHUB_SHA}\`, region: \`us-east-1\`"
+            echo "- Logs: ${RUN_URL}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # First failing job in dependency order. "skipped" is never counted as a failure.
+          first=""
+          for pair in "1 - Repository & configuration checks:$R_REPO" "2 - Terraform format:$R_FMT" \
+                      "3 - Init, validate, lint & test:$R_VAL" "4 - Security scan (Checkov):$R_SEC" \
+                      "5 - Terraform plan:$R_PLAN" "6 - Terraform apply:$R_APPLY"; do
+            name=${pair%:*}; res=${pair##*:}
+            case "$res" in success|skipped) ;; *) first="$name ($res)"; break;; esac
+          done
+          if [ -n "$first" ]; then
+            echo "::error title=First failing prerequisite::$first. Later skipped jobs were skipped because of it."
+            exit 1
+          fi
+          echo "No job failed. Skipped jobs are skipped by design or because nothing needed to run."

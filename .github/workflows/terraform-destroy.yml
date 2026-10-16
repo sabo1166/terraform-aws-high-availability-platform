@@ -77,7 +77,7 @@ jobs:
       - name: Authenticate to AWS
         uses: ./.github/actions/aws-auth
         with:
-          role-arn: ${{ vars.AWS_ROLE_ARN }}
+          role-arn: ${{ vars.AWS_APPLY_ROLE_ARN || vars.AWS_ROLE_ARN }}
           access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 

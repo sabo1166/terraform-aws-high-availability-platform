@@ -45,7 +45,7 @@ flowchart TB
 | `modules/monitoring` | SNS topic and 10 CloudWatch alarms |
 | `templates/` | `user_data` for the two tiers |
 | `tests/` | `terraform test` suite (mocked provider) |
-| `scripts/` | `check_links.py`: fails on broken relative Markdown links (run locally; not part of CI) |
+| `scripts/` | `check_links.py` (broken relative Markdown links) and `check_workflows.py` (workflow policy and event/dependency matrix); both run in CI job 1 |
 | `.tflint.hcl` | TFLint config (terraform + AWS rulesets) |
 | `docs/` | Architecture, troubleshooting, cost/cleanup, CI setup, publishing checklist, validation record |
 
@@ -113,6 +113,7 @@ terraform test                                   # mocked provider; no AWS acces
 tflint --init && tflint --recursive --format compact
 checkov -d . --framework terraform --compact --quiet --skip-download
 python3 scripts/check_links.py
+python3 scripts/check_workflows.py            # needs PyYAML
 ```
 
 `terraform test` (12 runs, mocked provider, so it proves the Terraform logic and guard rails, not that AWS accepts the resources) checks the HA defaults (two subnets per tier, NAT per AZ, Multi-AZ encrypted private RDS, ASG minimum 2 with ELB health checks, IMDSv2, HTTPS redirect), domain gating, single-NAT mode, and that bad input is rejected (AMI architecture or owner mismatch, engine/parameter-family mismatch, storage ceiling below initial storage, domain without zone, `min = 1`, other regions). Checkov findings that are intentional are suppressed inline with a reason (`grep -rn "checkov:skip" .`).
@@ -121,10 +122,10 @@ python3 scripts/check_links.py
 
 | Workflow | Trigger | Purpose |
 |---|---|---|
-| `terraform.yml` | PR, push to `main`, manual | Job 3: fmt, init, validate, TFLint, `terraform test`. Job 4: Checkov. Job 5: plan (same-repo PRs and manual runs). Job 6: `terraform apply -auto-approve`, only on a manual run with *apply* ticked, from `main`, with the typed phrase `APPLY us-east-1`, remote state, and approval on the `lab` Environment. Never on push or PR. |
+| `terraform.yml` | PR to `main`, push to `main`, manual | **Pull requests:** jobs 1-4 only (repo checks, format, validate/lint/test, Checkov). No AWS access, no plan. **Push to `main`:** jobs 1-4, then 5 plan, then 6 apply of that exact (encrypted, digest-checked) plan if it has changes, after approval on the `lab` Environment. **Manual run:** plan only. Job 7 always summarizes and names the first failing job. |
 | `terraform-destroy.yml` | manual | Same gates; lifts deletion protection, then destroys |
 
-Authentication prefers OIDC (`AWS_ROLE_ARN` repository variable) and falls back to `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` secrets. Setup, including the IAM trust policy: [`docs/GITHUB_ACTIONS.md`](docs/GITHUB_ACTIONS.md).
+Authentication prefers OIDC with separate plan and apply roles (`AWS_PLAN_ROLE_ARN`, `AWS_APPLY_ROLE_ARN`) and falls back to `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` secrets. Pull requests deliberately get no AWS access. The plan file is encrypted with the secret `TF_PLAN_ENCRYPTION_KEY` before it is uploaded. Nothing in CI has been run against AWS yet. Setup, trust policies, the Environment, and why jobs are skipped: [`docs/GITHUB_ACTIONS.md`](docs/GITHUB_ACTIONS.md).
 
 ## Troubleshooting and cleanup
 
