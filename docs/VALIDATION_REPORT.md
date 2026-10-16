@@ -65,6 +65,10 @@ Re-run after this change: `actionlint` exit 0, `terraform fmt -check` exit 0, `t
 
 Coverage dropped by design: the repository-checks job (required files, forbidden tracked files, credential-pattern scan, Markdown links) and the summary job no longer exist in CI. `scripts/check_links.py` remains for local use; enable GitHub secret scanning and push protection to replace the credential-pattern scan. Job 6 applies the current configuration with `-auto-approve`, not the saved plan from job 5.
 
+## 3b. Final review from a fresh clone (before the second push)
+
+The committed repository was cloned into a scratch directory and checked there, so the result does not depend on untracked files: `terraform fmt -check`, `init -lockfile=readonly`, `validate`, `terraform test` (12 of 12), TFLint (exit 0), Checkov (235 passed, 0 failed, 32 skipped), `actionlint` (exit 0) and `check_links.py` (0 broken) all pass. Line endings were measured by counting 0x0D bytes with Python: 0 in the committed blobs of every tracked file and 0 in the fresh clone's bootstrap templates, with `core.autocrlf=true` on this machine, so `.gitattributes` works. An earlier `grep -c` probe reported CRs; it was a false positive (the count equalled the line count) and was disregarded after this direct measurement.
+
 ## 4. Scanner findings that are accepted, not fixed
 
 | Finding | Why it stays |
