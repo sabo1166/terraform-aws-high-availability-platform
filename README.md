@@ -45,7 +45,7 @@ flowchart TB
 | `modules/monitoring` | SNS topic and 10 CloudWatch alarms |
 | `templates/` | `user_data` for the two tiers |
 | `tests/` | `terraform test` suite (mocked provider) |
-| `scripts/` | `check_links.py`: fails on broken relative Markdown links (also run in CI) |
+| `scripts/` | `check_links.py`: fails on broken relative Markdown links (run locally; not part of CI) |
 | `.tflint.hcl` | TFLint config (terraform + AWS rulesets) |
 | `docs/` | Architecture, troubleshooting, cost/cleanup, CI setup, publishing checklist, validation record |
 
@@ -121,8 +121,7 @@ python3 scripts/check_links.py
 
 | Workflow | Trigger | Purpose |
 |---|---|---|
-| `terraform.yml` | PR, push to `main`, manual | Repository checks (incl. link check), fmt, validate + TFLint + test, Checkov, plan (same-repo PRs and manual runs), summary. Never applies. |
-| `terraform-apply.yml` | manual | `main` only, typed confirmation, remote state required, GitHub Environment approval |
+| `terraform.yml` | PR, push to `main`, manual | Job 3: fmt, init, validate, TFLint, `terraform test`. Job 4: Checkov. Job 5: plan (same-repo PRs and manual runs). Job 6: `terraform apply -auto-approve`, only on a manual run with *apply* ticked, from `main`, with the typed phrase `APPLY us-east-1`, remote state, and approval on the `lab` Environment. Never on push or PR. |
 | `terraform-destroy.yml` | manual | Same gates; lifts deletion protection, then destroys |
 
 Authentication prefers OIDC (`AWS_ROLE_ARN` repository variable) and falls back to `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` secrets. Setup, including the IAM trust policy: [`docs/GITHUB_ACTIONS.md`](docs/GITHUB_ACTIONS.md).

@@ -57,6 +57,14 @@ This round:
 - **New CI steps:** Markdown link check; TFLint (`terraform-linters/setup-tflint` pinned to the verified `v6.3.2` commit).
 - Docs now state that the typed phrase and `main`-only check are guard rails, and that the Environment's branch restriction, the role trust policy and branch protection are what actually protect apply/destroy. They also state that any in-repo PR can obtain the *plan* role through OIDC, so that role must be read-only.
 
+## 3a. Workflow restructure (after the checks above)
+
+At the owner's request `terraform.yml` was reduced to jobs 3 (init, validate, lint & test, now including `terraform fmt -check`), 4 (Checkov), 5 (plan) and a new job 6 (`terraform apply -auto-approve`). Job 6 runs only on a manual run with *apply* ticked, from `main`, with the typed phrase and remote state, behind the `lab` Environment. `terraform-apply.yml` was removed as redundant; `terraform-destroy.yml` is unchanged.
+
+Re-run after this change: `actionlint` exit 0, `terraform fmt -check` exit 0, `terraform validate` success, `terraform test` 12 of 12, `check_links.py` 0 broken. The workflow has **not run on GitHub**.
+
+Coverage dropped by design: the repository-checks job (required files, forbidden tracked files, credential-pattern scan, Markdown links) and the summary job no longer exist in CI. `scripts/check_links.py` remains for local use; enable GitHub secret scanning and push protection to replace the credential-pattern scan. Job 6 applies the current configuration with `-auto-approve`, not the saved plan from job 5.
+
 ## 4. Scanner findings that are accepted, not fixed
 
 | Finding | Why it stays |

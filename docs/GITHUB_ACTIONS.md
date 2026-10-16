@@ -79,13 +79,13 @@ Any pull request opened from a branch in this repository can obtain the *plan* r
 
 | Workflow | Jobs (as shown in the Actions UI) |
 |---|---|
-| Terraform CI | 1 Repository checks · 2 Terraform format · 3 Init, validate, lint & test (TFLint) · 4 Security scan (Checkov) · 5 Terraform plan · 6 Workflow summary (`if: always()`) |
-| Terraform Apply (manual) | 1 Validate inputs · 2 Plan & apply (Environment-gated) |
+| Terraform CI | 3 Init, validate, lint & test (fmt, TFLint, `terraform test`) · 4 Security scan (Checkov) · 5 Terraform plan · 6 Terraform apply (auto-approve; manual run with *apply* ticked only; Environment-gated) |
 | Terraform Destroy (manual) | 1 Validate inputs · 2 Destroy (Environment-gated) |
 
 - Plan jobs run with `-lock=false` (a PR plan only reads state and must not block or strand a lock). `terraform init -lockfile=readonly` makes CI fail if `.terraform.lock.hcl` lacks a hash for the runner's platform.
 - CI runs on PRs/pushes; **plan** runs on same-repo PRs and manual dispatch (fork PRs have no secrets/OIDC, so plan is skipped, not failed).
-- Apply/destroy: `workflow_dispatch` only, from `main`, with typed phrases `APPLY us-east-1` / `DESTROY us-east-1`, remote state required. Concurrency group per environment prevents overlapping state changes and never cancels a running apply.
-- Plan output is uploaded only as a text log (7 days); the binary plan is never uploaded. Terraform masks `sensitive` values, but anyone with repo read access can download artifacts — keep the repo private.
+- Apply (job 6 of `terraform.yml`) and destroy (`terraform-destroy.yml`): `workflow_dispatch` only, from `main`, with the typed phrases `APPLY us-east-1` / `DESTROY us-east-1`, remote state required. They share the concurrency group `terraform-state-lab`, which never cancels a running job.
+- Job 6 runs `terraform apply -auto-approve` against the current configuration. It does **not** apply the exact plan from job 5 (the binary plan is deliberately not passed between jobs), so anything that changed in AWS or the variables between the two jobs is applied without further review. The Environment approval is the last human checkpoint.
+- Plan output is uploaded only as a text log (7 days); the binary plan is never uploaded. Terraform masks `sensitive` values, but anyone with repo read access can download artifacts and read job logs. **In a public repository that is everyone**, and plan output contains resource names and ARNs (including your AWS account ID). Keep the repository private, or do not run the plan/apply jobs until you accept that exposure.
 - Third-party actions are pinned to full commit SHAs with the release in a trailing comment. Each SHA was checked against the upstream tag with `git ls-remote` (all are lightweight tags, so the SHA is the commit). Update them deliberately, e.g. with Dependabot's `github-actions` ecosystem.
 - Terraform pinned to `1.16.2` (the version used for local validation) and Checkov to `3.3.29`.

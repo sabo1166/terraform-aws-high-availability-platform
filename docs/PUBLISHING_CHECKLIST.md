@@ -40,7 +40,7 @@ Do not run `terraform apply` until the AMI is confirmed and you have read `COST_
 
 ## After the first push
 
-- [ ] Open a PR; confirm all six *Terraform CI* jobs appear and the summary job reports correctly.
+- [ ] Open a PR; confirm jobs 3 (init/validate/lint/test), 4 (Checkov) and 5 (plan) appear and job 6 (apply) is skipped.
 - [ ] Confirm the plan job authenticates (OIDC) without printing credentials, and that the uploaded artifact is the text log only.
-- [ ] Confirm apply/destroy appear only under *Actions → Run workflow* and pause for Environment approval.
+- [ ] Confirm job 6 (apply) runs only from *Actions → Terraform CI → Run workflow* with *apply* ticked, and pauses for Environment approval. `terraform apply -auto-approve` has no further prompt after that approval.
 - [ ] Only then add the README status line about what was actually deployed, with evidence.

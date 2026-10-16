@@ -1,19 +1,28 @@
 name: Terraform CI
 
-# Checks on every PR/push; plan on PRs (same-repo) and on manual dispatch.
-# This workflow NEVER applies or destroys. See terraform-apply.yml / terraform-destroy.yml.
+# Push / PR: jobs 3-4 (and 5 on same-repo PRs). Manual run with "apply" ticked: jobs 3-6.
+# Apply never runs on push or PR. Teardown is a separate manual workflow (terraform-destroy.yml).
 on:
   pull_request:
   push:
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Apply after a successful plan (BILLABLE; main only; needs remote state)
+        type: boolean
+        default: false
+      confirmation:
+        description: 'Required when apply is ticked. Type exactly: APPLY us-east-1'
+        type: string
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: terraform-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: terraform-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }} # never cancel a push or a running apply
 
 env:
   TF_VERSION: "1.16.2" # the version this repo was validated with locally
@@ -22,69 +31,6 @@ env:
   AWS_REGION: us-east-1
 
 jobs:
-  repository-checks:
-    name: "1 - Repository checks"
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Required files exist
-        run: |
-          missing=0
-          for f in versions.tf variables.tf outputs.tf .gitignore README.md terraform.tfvars.example \
-                   docs/ARCHITECTURE.md docs/TROUBLESHOOTING.md docs/COST_AND_CLEANUP.md \
-                   docs/VALIDATION_REPORT.md docs/GITHUB_ACTIONS.md docs/PUBLISHING_CHECKLIST.md LICENSE .tflint.hcl scripts/check_links.py; do
-            if [ -f "$f" ]; then echo "ok       $f"; else echo "::error file=$f::Required file is missing"; missing=1; fi
-          done
-          exit $missing
-
-      - name: No forbidden files committed (state, plans, tfvars, keys)
-        run: |
-          bad=$(git ls-files | grep -E '(\.tfstate(\.|$)|\.tfplan$|^tfplan$|(^|/)terraform\.tfvars$|\.auto\.tfvars$|\.pem$|(^|/)id_rsa)' || true)
-          if [ -n "$bad" ]; then
-            echo "::error::Forbidden files are tracked by git:"; echo "$bad"; exit 1
-          fi
-          echo "No forbidden files tracked."
-
-      - name: Scan for obvious credential patterns (file names only, contents never printed)
-        run: |
-          # Bracket tricks keep this workflow from matching its own patterns.
-          hits=$(grep -rIlE --exclude-dir=.git --exclude-dir=.terraform \
-            -e 'AKI[A][0-9A-Z]{16}' -e 'ASI[A][0-9A-Z]{16}' \
-            -e 'BEGIN [A-Z ]*PRIVATE KE[Y]' \
-            -e 'aws_secret_access_ke[y][[:space:]]*=' . || true)
-          if [ -n "$hits" ]; then
-            echo "::error::Possible credentials found in these files (contents not shown):"
-            echo "$hits"
-            exit 1
-          fi
-          echo "No obvious credential patterns found."
-
-      - name: Relative Markdown links resolve
-        run: python3 scripts/check_links.py
-
-      - name: File inventory
-        run: find . -type f -not -path './.git/*' -not -path './.terraform/*' | sort
-
-  terraform-format:
-    name: "2 - Terraform format"
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-          terraform_wrapper: false
-      - name: terraform fmt -check
-        run: |
-          if ! terraform fmt -check -recursive -diff -no-color; then
-            echo "::error title=Formatting::The files listed above are not formatted. Run 'terraform fmt -recursive' locally and commit."
-            exit 1
-          fi
-
   terraform-init-validate:
     name: "3 - Terraform init, validate, lint & test"
     runs-on: ubuntu-latest
@@ -97,6 +43,12 @@ jobs:
           terraform_wrapper: false
       - name: Versions
         run: terraform version
+      - name: terraform fmt -check
+        run: |
+          if ! terraform fmt -check -recursive -diff -no-color; then
+            echo "::error title=Formatting::The files listed above are not formatted. Run 'terraform fmt -recursive' locally and commit."
+            exit 1
+          fi
       - name: terraform init (no backend, lock file must already be complete)
         run: terraform init -backend=false -input=false -no-color -lockfile=readonly
       - name: Provider versions
@@ -179,17 +131,17 @@ jobs:
               -backend-config="key=${STATE_KEY:-ha-web/lab/terraform.tfstate}" \
               -backend-config="region=us-east-1"
           else
-            echo "::warning title=No remote state::Repository variable TF_STATE_BUCKET is unset. This plan starts from EMPTY state, so it shows everything as 'create'. Fine for a review; apply is blocked without remote state."
+            echo "::warning title=No remote state::Repository variable TF_STATE_BUCKET is unset. This plan starts from EMPTY state, so it shows everything as 'create'. Apply is blocked without remote state."
             terraform init -input=false -no-color
           fi
 
       - name: terraform plan
         run: |
           set -o pipefail
-          terraform plan -input=false -no-color -lock=false -out=tfplan 2>&1 | tee plan.log
-          # -lock=false: a PR plan only reads state, so it must not contend with (or strand a lock
-          # for) a running apply. Sensitive values are rendered by Terraform as "(sensitive value)". The binary tfplan is
+          # -lock=false: a plan only reads state, so it must not contend with (or strand a lock for)
+          # a running apply. Sensitive values print as "(sensitive value)". The binary plan file is
           # deliberately NOT uploaded; it may hold secrets.
+          terraform plan -input=false -no-color -lock=false 2>&1 | tee plan.log
 
       - name: Plan summary
         if: always()
@@ -210,52 +162,79 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  workflow-summary:
-    name: "6 - Workflow summary"
-    needs:
-      - repository-checks
-      - terraform-format
-      - terraform-init-validate
-      - terraform-security-scan
-      - terraform-plan
-    if: always()
+  terraform-apply:
+    name: "6 - Terraform apply (auto-approve)"
+    needs: [terraform-plan]
+    # Only a manual run with "apply" ticked. Never on push or pull_request.
+    if: github.event_name == 'workflow_dispatch' && inputs.apply
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 90 # Multi-AZ RDS + CloudFront can take 30+ minutes
+    environment: lab # required-reviewer gate lives here (create it with reviewers; see docs/GITHUB_ACTIONS.md)
+    concurrency:
+      group: terraform-state-lab
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - name: Summarize results
+      - name: Check branch and confirmation phrase
         env:
-          R_REPO: ${{ needs.repository-checks.result }}
-          R_FMT: ${{ needs.terraform-format.result }}
-          R_VAL: ${{ needs.terraform-init-validate.result }}
-          R_SEC: ${{ needs.terraform-security-scan.result }}
-          R_PLAN: ${{ needs.terraform-plan.result }}
-          BRANCH: ${{ github.head_ref || github.ref_name }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          REF: ${{ github.ref }}
         run: |
-          icon() { case "$1" in success) echo "✅";; skipped) echo "⏭️";; cancelled) echo "🚫";; *) echo "❌";; esac; }
-          {
-            echo "## Terraform CI summary"
-            echo ""
-            echo "| Job | Result |"
-            echo "|---|---|"
-            echo "| 1 - Repository checks | $(icon "$R_REPO") $R_REPO |"
-            echo "| 2 - Terraform format | $(icon "$R_FMT") $R_FMT |"
-            echo "| 3 - Init, validate & test | $(icon "$R_VAL") $R_VAL |"
-            echo "| 4 - Security scan | $(icon "$R_SEC") $R_SEC |"
-            echo "| 5 - Plan | $(icon "$R_PLAN") $R_PLAN |"
-            echo ""
-            echo "- Commit: \`${GITHUB_SHA}\`"
-            echo "- Branch: \`${BRANCH}\`"
-            echo "- Region: \`us-east-1\`"
-            echo "- Logs: ${RUN_URL}"
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error title=Wrong branch::Apply may only run from main (got $REF)."; exit 1
+          fi
+          if [ "$CONFIRMATION" != "APPLY us-east-1" ]; then
+            echo "::error title=Confirmation mismatch::Type exactly: APPLY us-east-1"; exit 1
+          fi
 
-          fail=0
-          for r in "$R_REPO" "$R_FMT" "$R_VAL" "$R_SEC" "$R_PLAN"; do
-            case "$r" in success|skipped) ;; *) fail=1;; esac
-          done
-          if [ "$fail" -ne 0 ]; then
-            echo "::error title=Workflow failed::At least one job failed or was cancelled. See the table in the run summary."
+      - name: Require remote state
+        env:
+          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          if [ -z "$STATE_BUCKET" ]; then
+            echo "::error title=Remote state required::Set repository variable TF_STATE_BUCKET. Applying with runner-local state would orphan the resources."
             exit 1
           fi
-          echo "All jobs succeeded (or were intentionally skipped, e.g. plan on fork PRs)."
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Authenticate to AWS
+        uses: ./.github/actions/aws-auth
+        with:
+          role-arn: ${{ vars.AWS_ROLE_ARN }}
+          access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Optional inputs from repository variables
+        env:
+          V_DOMAIN: ${{ vars.TF_VAR_DOMAIN_NAME }}
+          V_ZONE: ${{ vars.TF_VAR_HOSTED_ZONE_NAME }}
+        run: |
+          [ -n "$V_DOMAIN" ] && echo "TF_VAR_domain_name=$V_DOMAIN" >> "$GITHUB_ENV"
+          [ -n "$V_ZONE" ] && echo "TF_VAR_hosted_zone_name=$V_ZONE" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: terraform init
+        env:
+          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          STATE_KEY: ${{ vars.TF_STATE_KEY }}
+        run: |
+          cp backend.tf.example backend.tf
+          terraform init -input=false -no-color \
+            -backend-config="bucket=$STATE_BUCKET" \
+            -backend-config="key=${STATE_KEY:-ha-web/lab/terraform.tfstate}" \
+            -backend-config="region=us-east-1"
+
+      - name: terraform apply -auto-approve
+        run: terraform apply -input=false -no-color -auto-approve -lock-timeout=120s
+
+      - name: Public URL
+        run: |
+          echo "### Applied" >> "$GITHUB_STEP_SUMMARY"
+          echo "Public URL: $(terraform output -raw public_url)" >> "$GITHUB_STEP_SUMMARY"
