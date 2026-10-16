@@ -110,6 +110,7 @@ python3 scripts/check_links.py
 python3 scripts/check_workflows.py            # needs PyYAML
 python3 scripts/build_visuals.py --check      # diagrams match the Terraform and are up to date
 bash tests/state_scripts_test.sh               # remote-state guard scripts, fake AWS CLI
+python3 scripts/replay_ci.py                  # run CI jobs 1-3's real commands locally, so local checks cannot drift from CI
 ```
 
 `terraform test` (12 runs, mocked provider, so it proves the Terraform logic and guard rails, not that AWS accepts the resources) checks the HA defaults (two subnets per tier, NAT per AZ, Multi-AZ encrypted private RDS, ASG minimum 2 with ELB health checks, IMDSv2, HTTPS redirect), domain gating, single-NAT mode, and that bad input is rejected (AMI architecture or owner mismatch, engine/parameter-family mismatch, storage ceiling below initial storage, domain without zone, `min = 1`, other regions). Checkov findings that are intentional are suppressed inline with a reason (`grep -rn "checkov:skip" .`).

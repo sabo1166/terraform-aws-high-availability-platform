@@ -118,12 +118,10 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
           terraform_wrapper: false
-      - name: Versions
-        run: terraform version
       - name: terraform init (no backend, lock file must already be complete)
         run: terraform init -backend=false -input=false -no-color -lockfile=readonly
-      - name: Provider versions
-        run: terraform providers -no-color
+      - name: Terraform and provider versions
+        run: terraform version
       - name: terraform validate
         run: terraform validate -no-color
       - name: terraform test (mocked providers, no AWS access)
