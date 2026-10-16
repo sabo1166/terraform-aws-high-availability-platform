@@ -47,7 +47,10 @@ jobs:
                    docs/VALIDATION_REPORT.md docs/GITHUB_ACTIONS.md docs/PUBLISHING_CHECKLIST.md \
                    LICENSE .tflint.hcl backend.tf backend.tfbackend.example docs/REMOTE_STATE.md \
                    scripts/check_links.py scripts/check_workflows.py scripts/check_state_bucket.sh \
-                   scripts/check_state_vs_infra.sh tests/state_scripts_test.sh; do
+                   scripts/check_state_vs_infra.sh tests/state_scripts_test.sh \
+                   scripts/build_visuals.py docs/ROADMAP.md docs/architecture.svg docs/roadmap.svg \
+                   docs/roadmap/index.html docs/roadmap/styles.css docs/roadmap/app.js docs/roadmap/data.js \
+                   docs/roadmap/roadmap.json docs/roadmap/flow.json; do
             if [ -f "$f" ]; then echo "ok       $f"; else echo "::error file=$f::Required file is missing"; missing=1; fi
           done
           exit $missing
@@ -82,6 +85,11 @@ jobs:
 
       - name: Remote-state guard scripts (fake AWS CLI; no AWS access)
         run: bash tests/state_scripts_test.sh
+
+      - name: Diagrams match the Terraform, assets are well-formed (SVG, HTML, CSS, JS)
+        run: |
+          python scripts/build_visuals.py --check
+          node --check docs/roadmap/app.js
 
   terraform-format:
     name: "2 - Terraform format"

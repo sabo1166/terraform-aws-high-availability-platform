@@ -1,0 +1,211 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1532 1114" width="1532" height="1114" class="roadmap" role="img" aria-labelledby="rm-title rm-desc" font-family='Inter, "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif'>
+<title id="rm-title">Engineering roadmap and project journey</title><desc id="rm-desc">12 stages. 9 verified locally, 2 documented, 1 planned. 0 verified on AWS: nothing has been deployed.</desc>
+<defs>
+<linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0d1830"/><stop offset="1" stop-color="#070d1a"/></linearGradient>
+<linearGradient id="rail" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#34d399"/><stop offset=".62" stop-color="#22d3ee"/><stop offset="1" stop-color="#6f84a8"/></linearGradient>
+</defs>
+<style>
+.roadmap .bg{fill:url(#bgGrad)} .roadmap text{font-family:Inter, "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif} .roadmap .t{fill:#e8eef9} .roadmap .m{fill:#9db0cf} .roadmap .d{fill:#6f84a8}
+.roadmap .card{fill:#101b33;stroke:#27385f;stroke-width:1.2} .roadmap .chipbg{fill:#0c1730}
+</style>
+<rect class="bg" width="1532" height="1114"/>
+<text class="t" x="40" y="50" font-size="30" font-weight="700">Engineering roadmap and project journey</text>
+<text class="m" x="40" y="80" font-size="16">What the repository can back up with evidence. Nothing has been deployed to AWS.</text>
+<g><rect class="card" x="918" y="24" width="140" height="64" rx="10" stroke="#34d399" stroke-opacity=".7"/>
+<text class="t" x="988" y="54" font-size="22" text-anchor="middle" font-weight="700">9 of 12</text><text class="m" x="988" y="76" font-size="13" text-anchor="middle">verified locally</text></g>
+<g><rect class="card" x="1068" y="24" width="140" height="64" rx="10" stroke="#4c8dff" stroke-opacity=".7"/>
+<text class="t" x="1138" y="54" font-size="22" text-anchor="middle" font-weight="700">2</text><text class="m" x="1138" y="76" font-size="13" text-anchor="middle">documented</text></g>
+<g><rect class="card" x="1218" y="24" width="140" height="64" rx="10" stroke="#94a3b8" stroke-opacity=".7"/>
+<text class="t" x="1288" y="54" font-size="22" text-anchor="middle" font-weight="700">1</text><text class="m" x="1288" y="76" font-size="13" text-anchor="middle">planned</text></g>
+<g><rect class="card" x="1368" y="24" width="140" height="64" rx="10" stroke="#fbbf24" stroke-opacity=".7"/>
+<text class="t" x="1438" y="54" font-size="22" text-anchor="middle" font-weight="700">0 of 12</text><text class="m" x="1438" y="76" font-size="13" text-anchor="middle">verified on AWS</text></g>
+<path d="M56,150 H1476" stroke="url(#rail)" stroke-width="4" stroke-linecap="round" opacity=".9"/>
+<g id="stage-design"><rect class="card" x="24" y="118" width="350" height="276" rx="12"/>
+<rect x="24" y="118" width="350" height="5" rx="2.5" fill="#4c8dff" opacity=".9"/>
+<circle cx="58" cy="150" r="18" fill="#0a1428" stroke="#4c8dff" stroke-width="2.5"/>
+<text class="t" x="58" y="156.5" font-size="18" text-anchor="middle" font-weight="700">1</text>
+<text class="t" x="88" y="156" font-size="17" font-weight="700">Requirements &amp; design</text>
+<text class="m" x="42" y="206" font-size="14.5">Three tiers, two AZs, private by</text>
+<text class="m" x="42" y="226" font-size="14.5">default.</text>
+<rect class="chipbg" x="42" y="248" width="98" height="26" rx="13" stroke="#4c8dff" stroke-width="1.2"/>
+<text class="t" x="91.0" y="266" font-size="13" text-anchor="middle" font-weight="600">Documented</text>
+<rect class="chipbg" x="150" y="248" width="82" height="26" rx="13" stroke="#6f84a8" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text class="m" x="191.0" y="266" font-size="12.5" text-anchor="middle">AWS: n/a</text>
+<text class="d" x="42" y="306" font-size="12" font-weight="600">Evidence</text>
+<text class="m" x="48" y="326" font-size="13">· Docs only; not machine-checked</text>
+</g>
+<g id="stage-foundation"><rect class="card" x="402" y="118" width="350" height="276" rx="12"/>
+<rect x="402" y="118" width="350" height="5" rx="2.5" fill="#34d399" opacity=".9"/>
+<circle cx="436" cy="150" r="18" fill="#0a1428" stroke="#34d399" stroke-width="2.5"/>
+<text class="t" x="436" y="156.5" font-size="18" text-anchor="middle" font-weight="700">2</text>
+<text class="t" x="466" y="156" font-size="17" font-weight="700">Foundation &amp; modules</text>
+<text class="m" x="420" y="206" font-size="14.5">Five modules, pinned providers,</text>
+<text class="m" x="420" y="226" font-size="14.5">plan-time guard rails.</text>
+<rect class="chipbg" x="420" y="248" width="141" height="26" rx="13" stroke="#34d399" stroke-width="1.2"/>
+<text class="t" x="490.5" y="266" font-size="13" text-anchor="middle" font-weight="600">Verified locally</text>
+<rect class="chipbg" x="571" y="248" width="110" height="26" rx="13" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text class="m" x="626.0" y="266" font-size="12.5" text-anchor="middle">AWS: pending</text>
+<text class="d" x="420" y="306" font-size="12" font-weight="600">Checks</text>
+<text class="m" x="426" y="326" font-size="13">· terraform validate</text>
+<text class="m" x="426" y="343" font-size="13">· terraform test (12)</text>
+<text class="m" x="426" y="360" font-size="13">· +2 more</text>
+</g>
+<g id="stage-network"><rect class="card" x="780" y="118" width="350" height="276" rx="12"/>
+<rect x="780" y="118" width="350" height="5" rx="2.5" fill="#34d399" opacity=".9"/>
+<circle cx="814" cy="150" r="18" fill="#0a1428" stroke="#34d399" stroke-width="2.5"/>
+<text class="t" x="814" y="156.5" font-size="18" text-anchor="middle" font-weight="700">3</text>
+<text class="t" x="844" y="156" font-size="17" font-weight="700">Network &amp; routing</text>
+<text class="m" x="798" y="206" font-size="14.5">Public, private and isolated subnets;</text>
+<text class="m" x="798" y="226" font-size="14.5">one NAT per AZ.</text>
+<rect class="chipbg" x="798" y="248" width="141" height="26" rx="13" stroke="#34d399" stroke-width="1.2"/>
+<text class="t" x="868.5" y="266" font-size="13" text-anchor="middle" font-weight="600">Verified locally</text>
+<rect class="chipbg" x="949" y="248" width="110" height="26" rx="13" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text class="m" x="1004.0" y="266" font-size="12.5" text-anchor="middle">AWS: pending</text>
+<text class="d" x="798" y="306" font-size="12" font-weight="600">Checks</text>
+<text class="m" x="804" y="326" font-size="13">· terraform test: HA defaults</text>
+<text class="m" x="804" y="343" font-size="13">· terraform test: single NAT mode</text>
+</g>
+<g id="stage-security"><rect class="card" x="1158" y="118" width="350" height="276" rx="12"/>
+<rect x="1158" y="118" width="350" height="5" rx="2.5" fill="#34d399" opacity=".9"/>
+<circle cx="1192" cy="150" r="18" fill="#0a1428" stroke="#34d399" stroke-width="2.5"/>
+<text class="t" x="1192" y="156.5" font-size="18" text-anchor="middle" font-weight="700">4</text>
+<text class="t" x="1222" y="156" font-size="17" font-weight="700">Security groups</text>
+<text class="m" x="1176" y="206" font-size="14.5">Each tier reachable only from the one</text>
+<text class="m" x="1176" y="226" font-size="14.5">before it.</text>
+<rect class="chipbg" x="1176" y="248" width="141" height="26" rx="13" stroke="#34d399" stroke-width="1.2"/>
+<text class="t" x="1246.5" y="266" font-size="13" text-anchor="middle" font-weight="600">Verified locally</text>
+<rect class="chipbg" x="1327" y="248" width="110" height="26" rx="13" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text class="m" x="1382.0" y="266" font-size="12.5" text-anchor="middle">AWS: pending</text>
+<text class="d" x="1176" y="306" font-size="12" font-weight="600">Checks</text>
+<text class="m" x="1182" y="326" font-size="13">· Checkov</text>
+<text class="m" x="1182" y="343" font-size="13">· Trivy (run locally)</text>
+<text class="m" x="1182" y="360" font-size="13">· terraform test: IMDSv2</text>
+</g>
+<path d="M56,478 H1476" stroke="url(#rail)" stroke-width="4" stroke-linecap="round" opacity=".9"/>
+<g id="stage-loadbalancing"><rect class="card" x="24" y="446" width="350" height="276" rx="12"/>
+<rect x="24" y="446" width="350" height="5" rx="2.5" fill="#34d399" opacity=".9"/>
+<circle cx="58" cy="478" r="18" fill="#0a1428" stroke="#34d399" stroke-width="2.5"/>
+<text class="t" x="58" y="484.5" font-size="18" text-anchor="middle" font-weight="700">5</text>
+<text class="t" x="88" y="484" font-size="17" font-weight="700">Load balancing</text>
+<text class="m" x="42" y="534" font-size="14.5">Header-locked external ALB, private</text>
+<text class="m" x="42" y="554" font-size="14.5">internal ALB.</text>
+<rect class="chipbg" x="42" y="576" width="141" height="26" rx="13" stroke="#34d399" stroke-width="1.2"/>
+<text class="t" x="112.5" y="594" font-size="13" text-anchor="middle" font-weight="600">Verified locally</text>
+<rect class="chipbg" x="193" y="576" width="110" height="26" rx="13" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text class="m" x="248.0" y="594" font-size="12.5" text-anchor="middle">AWS: pending</text>
+<text class="d" x="42" y="634" font-size="12" font-weight="600">Checks</text>
+<text class="m" x="48" y="654" font-size="13">· Checkov</text>
+<text class="m" x="48" y="671" font-size="13">· terraform validate</text>
+<text class="m" x="48" y="688" font-size="13">· scripts/check_workflows.py (workflow</text>
+<text class="m" x="48" y="705" font-size="13">· rules)</text>
+</g>
+<g id="stage-autoscaling"><rect class="card" x="402" y="446" width="350" height="276" rx="12"/>
+<rect x="402" y="446" width="350" height="5" rx="2.5" fill="#34d399" opacity=".9"/>
+<circle cx="436" cy="478" r="18" fill="#0a1428" stroke="#34d399" stroke-width="2.5"/>
+<text class="t" x="436" y="484.5" font-size="18" text-anchor="middle" font-weight="700">6</text>
+<text class="t" x="466" y="484" font-size="17" font-weight="700">Auto Scaling</text>
+<text class="m" x="420" y="534" font-size="14.5">Two Auto Scaling groups, min 2, ELB</text>
+<text class="m" x="420" y="554" font-size="14.5">health checks.</text>
+<rect class="chipbg" x="420" y="576" width="141" height="26" rx="13" stroke="#34d399" stroke-width="1.2"/>
+<text class="t" x="490.5" y="594" font-size="13" text-anchor="middle" font-weight="600">Verified locally</text>
+<rect class="chipbg" x="571" y="576" width="110" height="26" rx="13" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text class="m" x="626.0" y="594" font-size="12.5" text-anchor="middle">AWS: pending</text>
+<text class="d" x="420" y="634" font-size="12" font-weight="600">Checks</text>
+<text class="m" x="426" y="654" font-size="13">· terraform test</text>
+<text class="m" x="426" y="671" font-size="13">· bash -n</text>
+<text class="m" x="426" y="688" font-size="13">· +2 more</text>
+</g>
+<g id="stage-database"><rect class="card" x="780" y="446" width="350" height="276" rx="12"/>
+<rect x="780" y="446" width="350" height="5" rx="2.5" fill="#34d399" opacity=".9"/>
+<circle cx="814" cy="478" r="18" fill="#0a1428" stroke="#34d399" stroke-width="2.5"/>
+<text class="t" x="814" y="484.5" font-size="18" text-anchor="middle" font-weight="700">7</text>
+<text class="t" x="844" y="484" font-size="17" font-weight="700">RDS &amp; resilience</text>
+<text class="m" x="798" y="534" font-size="14.5">Multi-AZ PostgreSQL; password never in</text>
+<text class="m" x="798" y="554" font-size="14.5">state.</text>
+<rect class="chipbg" x="798" y="576" width="141" height="26" rx="13" stroke="#34d399" stroke-width="1.2"/>
+<text class="t" x="868.5" y="594" font-size="13" text-anchor="middle" font-weight="600">Verified locally</text>
+<rect class="chipbg" x="949" y="576" width="110" height="26" rx="13" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text class="m" x="1004.0" y="594" font-size="12.5" text-anchor="middle">AWS: pending</text>
+<text class="d" x="798" y="634" font-size="12" font-weight="600">Checks</text>
+<text class="m" x="804" y="654" font-size="13">· terraform test: RDS settings</text>
+<text class="m" x="804" y="671" font-size="13">· terraform test: engine/family mismatch</text>
+</g>
+<g id="stage-edge"><rect class="card" x="1158" y="446" width="350" height="276" rx="12"/>
+<rect x="1158" y="446" width="350" height="5" rx="2.5" fill="#34d399" opacity=".9"/>
+<circle cx="1192" cy="478" r="18" fill="#0a1428" stroke="#34d399" stroke-width="2.5"/>
+<text class="t" x="1192" y="484.5" font-size="18" text-anchor="middle" font-weight="700">8</text>
+<text class="t" x="1222" y="484" font-size="17" font-weight="700">CloudFront, DNS &amp; TLS</text>
+<text class="m" x="1176" y="534" font-size="14.5">CloudFront, optional ACM and Route 53,</text>
+<text class="m" x="1176" y="554" font-size="14.5">HTTPS only.</text>
+<rect class="chipbg" x="1176" y="576" width="141" height="26" rx="13" stroke="#34d399" stroke-width="1.2"/>
+<text class="t" x="1246.5" y="594" font-size="13" text-anchor="middle" font-weight="600">Verified locally</text>
+<rect class="chipbg" x="1327" y="576" width="110" height="26" rx="13" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text class="m" x="1382.0" y="594" font-size="12.5" text-anchor="middle">AWS: pending</text>
+<text class="d" x="1176" y="634" font-size="12" font-weight="600">Checks</text>
+<text class="m" x="1182" y="654" font-size="13">· terraform test: HTTPS redirect</text>
+<text class="m" x="1182" y="671" font-size="13">· terraform test: custom domain</text>
+</g>
+<path d="M56,806 H1476" stroke="url(#rail)" stroke-width="4" stroke-linecap="round" opacity=".9"/>
+<g id="stage-ci"><rect class="card" x="24" y="774" width="350" height="276" rx="12"/>
+<rect x="24" y="774" width="350" height="5" rx="2.5" fill="#34d399" opacity=".9"/>
+<circle cx="58" cy="806" r="18" fill="#0a1428" stroke="#34d399" stroke-width="2.5"/>
+<text class="t" x="58" y="812.5" font-size="18" text-anchor="middle" font-weight="700">9</text>
+<text class="t" x="88" y="812" font-size="17" font-weight="700">GitHub Actions</text>
+<text class="m" x="42" y="862" font-size="14.5">Seven jobs; pull requests static only;</text>
+<text class="m" x="42" y="882" font-size="14.5">saved-plan apply.</text>
+<rect class="chipbg" x="42" y="904" width="141" height="26" rx="13" stroke="#34d399" stroke-width="1.2"/>
+<text class="t" x="112.5" y="922" font-size="13" text-anchor="middle" font-weight="600">Verified locally</text>
+<rect class="chipbg" x="193" y="904" width="110" height="26" rx="13" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text class="m" x="248.0" y="922" font-size="12.5" text-anchor="middle">AWS: pending</text>
+<text class="d" x="42" y="962" font-size="12" font-weight="600">Checks</text>
+<text class="m" x="48" y="982" font-size="13">· actionlint</text>
+<text class="m" x="48" y="999" font-size="13">· check_workflows.py</text>
+<text class="m" x="48" y="1016" font-size="13">· +2 more</text>
+</g>
+<g id="stage-state"><rect class="card" x="402" y="774" width="350" height="276" rx="12"/>
+<rect x="402" y="774" width="350" height="5" rx="2.5" fill="#34d399" opacity=".9"/>
+<circle cx="436" cy="806" r="18" fill="#0a1428" stroke="#34d399" stroke-width="2.5"/>
+<text class="t" x="436" y="812.5" font-size="18" text-anchor="middle" font-weight="700">10</text>
+<text class="t" x="466" y="812" font-size="17" font-weight="700">Remote state &amp; safety</text>
+<text class="m" x="420" y="862" font-size="14.5">S3 with native locking; guards against</text>
+<text class="m" x="420" y="882" font-size="14.5">empty state.</text>
+<rect class="chipbg" x="420" y="904" width="141" height="26" rx="13" stroke="#34d399" stroke-width="1.2"/>
+<text class="t" x="490.5" y="922" font-size="13" text-anchor="middle" font-weight="600">Verified locally</text>
+<rect class="chipbg" x="571" y="904" width="110" height="26" rx="13" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text class="m" x="626.0" y="922" font-size="12.5" text-anchor="middle">AWS: pending</text>
+<text class="d" x="420" y="962" font-size="12" font-weight="600">Checks</text>
+<text class="m" x="426" y="982" font-size="13">· moto S3 emulator rehearsal</text>
+<text class="m" x="426" y="999" font-size="13">· tests/state_scripts_test.sh (12)</text>
+<text class="m" x="426" y="1016" font-size="13">· check_workflows.py backend rules</text>
+</g>
+<g id="stage-validation"><rect class="card" x="780" y="774" width="350" height="276" rx="12"/>
+<rect x="780" y="774" width="350" height="5" rx="2.5" fill="#4c8dff" opacity=".9"/>
+<circle cx="814" cy="806" r="18" fill="#0a1428" stroke="#4c8dff" stroke-width="2.5"/>
+<text class="t" x="814" y="812.5" font-size="18" text-anchor="middle" font-weight="700">11</text>
+<text class="t" x="844" y="812" font-size="17" font-weight="700">Validation &amp; cost</text>
+<text class="m" x="798" y="862" font-size="14.5">What was run, what failed, what costs</text>
+<text class="m" x="798" y="882" font-size="14.5">money.</text>
+<rect class="chipbg" x="798" y="904" width="98" height="26" rx="13" stroke="#4c8dff" stroke-width="1.2"/>
+<text class="t" x="847.0" y="922" font-size="13" text-anchor="middle" font-weight="600">Documented</text>
+<rect class="chipbg" x="906" y="904" width="110" height="26" rx="13" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text class="m" x="961.0" y="922" font-size="12.5" text-anchor="middle">AWS: pending</text>
+<text class="d" x="798" y="962" font-size="12" font-weight="600">Evidence</text>
+<text class="m" x="804" y="982" font-size="13">· Docs only; not machine-checked</text>
+</g>
+<g id="stage-deploy"><rect class="card" x="1158" y="774" width="350" height="276" rx="12" stroke-dasharray="6 5"/>
+<rect x="1158" y="774" width="350" height="5" rx="2.5" fill="#94a3b8" opacity=".9"/>
+<circle cx="1192" cy="806" r="18" fill="#0a1428" stroke="#94a3b8" stroke-width="2.5"/>
+<text class="t" x="1192" y="812.5" font-size="18" text-anchor="middle" font-weight="700">12</text>
+<text class="t" x="1222" y="812" font-size="17" font-weight="700">Deploy &amp; next steps</text>
+<text class="m" x="1176" y="862" font-size="14.5">AMI check, first plan, sandbox apply,</text>
+<text class="m" x="1176" y="882" font-size="14.5">hardening.</text>
+<rect class="chipbg" x="1176" y="904" width="76" height="26" rx="13" stroke="#94a3b8" stroke-width="1.2"/>
+<text class="t" x="1214.0" y="922" font-size="13" text-anchor="middle" font-weight="600">Planned</text>
+<rect class="chipbg" x="1262" y="904" width="110" height="26" rx="13" stroke="#fbbf24" stroke-width="1.2" stroke-dasharray="3 3"/>
+<text class="m" x="1317.0" y="922" font-size="12.5" text-anchor="middle">AWS: pending</text>
+<text class="d" x="1176" y="962" font-size="12" font-weight="600">Next</text>
+<text class="m" x="1182" y="982" font-size="13">· Inspect ami-0ed59cbb87dfa8dba and pin its</text>
+<text class="m" x="1182" y="999" font-size="13">· owner.</text>
+</g>
+<text class="d" x="40" y="1090" font-size="13">Interactive version with evidence, files and trade-offs: docs/roadmap/index.html   ·   green = automated local checks pass · blue = documented · grey dashed = planned · amber = needs AWS</text>
+</svg>

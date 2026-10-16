@@ -4,32 +4,21 @@ A three-tier web stack on AWS in `us-east-1`, written in Terraform: CloudFront i
 
 **Status:** the configuration passes `terraform validate`, a mocked `terraform test` suite and Checkov. It has **not been planned or applied against AWS**, and the base AMI has not been inspected. [`docs/VALIDATION_REPORT.md`](docs/VALIDATION_REPORT.md) lists exactly what was run.
 
-```mermaid
-flowchart TB
-    user([Viewer]) -->|HTTPS| r53[Route 53 alias<br/>optional]
-    r53 --> cf[CloudFront<br/>ACM cert, adds X-Origin-Verify]
-    cf -->|HTTP :80| extalb
+## Engineering Roadmap & Project Journey
 
-    subgraph vpc[VPC]
-      subgraph pub[Public subnets]
-        extalb[External ALB]
-        nat[NAT gateways]
-      end
-      subgraph app[Private app subnets]
-        fe[Frontend ASG<br/>nginx :80]
-        intalb[Internal ALB]
-        be[Backend ASG<br/>Python API :8080]
-      end
-      subgraph db[Isolated DB subnets - no default route]
-        rds[(RDS PostgreSQL<br/>Multi-AZ)]
-      end
-      extalb --> fe
-      fe -->|/api/*| intalb
-      intalb --> be
-      be -->|:5432| rds
-      fe & be -. egress .-> nat
-    end
-```
+[![Engineering roadmap: 12 stages, 9 verified locally, 2 documented, 1 planned, 0 verified on AWS](docs/roadmap.svg)](docs/roadmap.svg)
+
+**[Open the interactive roadmap and request-flow simulation](docs/roadmap/index.html)**: clone the repository and open `docs/roadmap/index.html` in a browser. GitHub's file view shows HTML source rather than the rendered page, so the static previews on this page are the SVGs. The interactive page runs locally with no server, no AWS access and no network requests.
+
+Where the project stands, as counts rather than a percentage: **9 of 12 stages verified locally** (static analysis, mocked tests, local emulators), 2 documented, 1 planned, and **0 of 12 verified on AWS**, because nothing has been deployed. Evidence, files and caveats for each stage: [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
+## Architecture
+
+[![Architecture: Route 53, CloudFront, external ALB, frontend Auto Scaling group, internal ALB, backend Auto Scaling group and Multi-AZ RDS PostgreSQL across two Availability Zones](docs/architecture.svg)](docs/architecture.svg)
+
+Derived from the Terraform in this repository and checked against it by `scripts/build_visuals.py`. It shows the **configured** design (capacities are configured values, not live capacity), not the state of any AWS account.
+
+A request resolves the name through Route 53 (a lookup, not a hop), reaches CloudFront over HTTPS, and is forwarded over HTTP with a secret header through the Internet Gateway to the external ALB. From there it goes to a frontend instance in a private subnet, which proxies `/api/*` to the internal ALB, then to a backend instance, which talks to PostgreSQL in isolated subnets. [Walk through it step by step in the simulation](docs/roadmap/index.html#architecture) (a simulated request, not live telemetry), or read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for traffic paths, security groups and failure behaviour.
 
 ## Layout
 
@@ -46,8 +35,10 @@ flowchart TB
 | `modules/monitoring` | SNS topic and 10 CloudWatch alarms |
 | `templates/` | `user_data` for the two tiers |
 | `tests/` | `terraform test` suite (mocked provider) |
-| `scripts/` | `check_links.py` (broken relative Markdown links) and `check_workflows.py` (workflow policy and event/dependency matrix); both run in CI job 1 |
+| `scripts/` | `check_links.py` (broken relative Markdown links), `check_workflows.py` (workflow policy and event/dependency matrix), `build_visuals.py` (generates the diagrams and checks them against the Terraform); all run in CI job 1 |
 | `.tflint.hcl` | TFLint config (terraform + AWS rulesets) |
+| `docs/roadmap/` | Interactive roadmap and request-flow simulation (`index.html`, `styles.css`, `app.js`); `roadmap.json` and `flow.json` are the sources, `data.js` is generated |
+| `docs/architecture.svg`, `docs/roadmap.svg` | Static diagrams used in this README (generated) |
 | `docs/` | Architecture, remote state, troubleshooting, cost/cleanup, CI setup, publishing checklist, validation record |
 
 ## Design notes
@@ -117,6 +108,7 @@ tflint --init && tflint --recursive --format compact
 checkov -d . --framework terraform --compact --quiet --skip-download
 python3 scripts/check_links.py
 python3 scripts/check_workflows.py            # needs PyYAML
+python3 scripts/build_visuals.py --check      # diagrams match the Terraform and are up to date
 bash tests/state_scripts_test.sh               # remote-state guard scripts, fake AWS CLI
 ```
 

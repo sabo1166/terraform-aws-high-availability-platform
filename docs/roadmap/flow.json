@@ -1,0 +1,125 @@
+{
+  "meta": {
+    "label": "Simulated request flow",
+    "disclaimer": "An educational walkthrough of the design in this repository. No request is sent; there is no AWS telemetry, latency, traffic or availability data."
+  },
+  "layers": [
+    { "id": "health", "label": "Health checks", "default": true },
+    { "id": "nat", "label": "NAT egress", "default": true },
+    { "id": "security", "label": "Security groups", "default": true },
+    { "id": "replication", "label": "DB replication", "default": true }
+  ],
+  "steps": [
+    {
+      "id": "dns",
+      "title": "DNS lookup",
+      "kicker": "A lookup, not a hop",
+      "text": "The browser asks Route 53 which addresses serve the site. Route 53 answers with an alias to CloudFront. Only the answer comes back: the request itself does not pass through Route 53, and DNS traffic never touches CloudFront. Without a custom domain you use the generated cloudfront.net name and this lookup is ordinary public DNS.",
+      "nodes": ["browser", "route53"],
+      "path": [{ "edge": "e_dns", "dir": "fwd" }, { "edge": "e_dns", "dir": "rev" }],
+      "refs": [{ "path": "modules/edge/main.tf", "label": "A and AAAA alias records (only when domain_name and hosted_zone_name are set)" }]
+    },
+    {
+      "id": "https",
+      "title": "HTTPS request to CloudFront",
+      "kicker": "TLS ends at the edge",
+      "text": "The browser connects to CloudFront over HTTPS. CloudFront terminates TLS with the ACM certificate (TLS 1.2 or newer when a custom domain is configured). Plain HTTP is redirected to HTTPS on every behavior. The browser never connects to the load balancer, the instances or the database.",
+      "nodes": ["browser", "cloudfront", "acm"],
+      "path": [{ "edge": "e_browser_cf", "dir": "fwd" }],
+      "refs": [{ "path": "modules/edge/main.tf", "label": "viewer_protocol_policy = redirect-to-https; viewer_certificate" }]
+    },
+    {
+      "id": "cache",
+      "title": "CloudFront chooses: cache or origin",
+      "kicker": "Delivery and caching",
+      "text": "Three behaviors decide what happens. /static/* uses the managed caching-optimized policy and can be served from the edge. / and /api/* use the managed caching-disabled policy, so dynamic pages and API calls always go to the origin. For an origin fetch CloudFront adds the X-Origin-Verify header, a generated secret shared with the external ALB.",
+      "nodes": ["cloudfront", "origin_header"],
+      "path": [],
+      "refs": [{ "path": "modules/edge/main.tf", "label": "default, /api/* and /static/* cache behaviors; custom_header" }]
+    },
+    {
+      "id": "origin",
+      "title": "Origin request through the Internet Gateway",
+      "kicker": "HTTP :80 to the external ALB",
+      "text": "CloudFront sends an HTTP request on port 80 to the external ALB, entering the VPC through the Internet Gateway. The ALB's security group admits only CloudFront's origin-facing IP list, and its listener answers 403 unless the X-Origin-Verify value matches. This leg is not encrypted in transit, which is a documented limitation.",
+      "nodes": ["igw", "ext_alb", "sg_ext", "origin_header"],
+      "path": [{ "edge": "e_cf_igw", "dir": "fwd" }, { "edge": "e_igw_alb", "dir": "fwd" }],
+      "refs": [
+        { "path": "alb.tf", "label": "listener default 403 and the header rule" },
+        { "path": "security_groups.tf", "label": "ext_alb ingress from the CloudFront prefix list" }
+      ]
+    },
+    {
+      "id": "frontend",
+      "title": "External ALB forwards to the frontend",
+      "kicker": "Healthy targets only",
+      "text": "The ALB forwards the request to one healthy frontend instance. Instances live in private subnets, one or more per Availability Zone. The ALB health-checks each target on /healthz and stops sending traffic to one that fails; the Auto Scaling group then replaces it. The instance drawn here is illustrative: either zone can serve the request.",
+      "nodes": ["ext_alb", "fe_asg", "fe_a", "sg_fe"],
+      "path": [{ "edge": "e_alb_fe", "dir": "fwd" }],
+      "refs": [
+        { "path": "modules/app_tier/main.tf", "label": "ASG with ELB health checks, min 2 / max 4" },
+        { "path": "alb.tf", "label": "frontend target group and /healthz check" }
+      ]
+    },
+    {
+      "id": "proxy",
+      "title": "nginx serves the page or proxies the API",
+      "kicker": "Frontend to internal ALB",
+      "text": "nginx on the instance serves the static page itself. For /api/* it proxies to the internal ALB, re-resolving that name every 30 seconds because load-balancer addresses change. Only the frontend security group may reach the internal ALB.",
+      "nodes": ["fe_a", "int_alb", "sg_int"],
+      "path": [{ "edge": "e_fe_int", "dir": "fwd" }],
+      "refs": [
+        { "path": "templates/frontend_user_data.sh.tftpl", "label": "nginx configuration" },
+        { "path": "security_groups.tf", "label": "frontend to int_alb rule" }
+      ]
+    },
+    {
+      "id": "backend",
+      "title": "Internal ALB forwards to the backend",
+      "kicker": "Private, port 8080",
+      "text": "The internal ALB, which has no public address, forwards to a healthy backend instance on port 8080. Its health check hits /health, which reports only that the process is alive; it deliberately ignores the database, so a database failover does not drain the whole tier.",
+      "nodes": ["int_alb", "be_asg", "be_a", "sg_be"],
+      "path": [{ "edge": "e_int_be", "dir": "fwd" }],
+      "refs": [
+        { "path": "alb.tf", "label": "internal ALB and backend target group" },
+        { "path": "templates/backend_user_data.sh.tftpl", "label": "/health and /api endpoints" }
+      ]
+    },
+    {
+      "id": "database",
+      "title": "Backend queries PostgreSQL",
+      "kicker": "Isolated subnets, TLS enforced",
+      "text": "The backend connects to the RDS primary on port 5432. The database sits in isolated subnets with no route to the internet, only the backend security group may connect, and the parameter group forces SSL. Multi-AZ keeps a synchronous standby in the other zone for automatic failover. The sample backend only checks that the database port is reachable; it does not run queries.",
+      "nodes": ["be_a", "rds_p", "rds_s", "sg_rds"],
+      "path": [{ "edge": "e_be_rds", "dir": "fwd" }],
+      "side": [{ "edge": "e_repl", "layer": "replication" }],
+      "refs": [
+        { "path": "modules/database/main.tf", "label": "multi_az, storage_encrypted, rds.force_ssl" },
+        { "path": "security_groups.tf", "label": "rds ingress from the backend group only" }
+      ]
+    },
+    {
+      "id": "response",
+      "title": "The response returns",
+      "kicker": "Back along the same path",
+      "text": "The answer travels back through the same connections, in reverse, to CloudFront and then to the browser. A response for /static/* could also have been served from CloudFront's cache without reaching the origin. This was a simulation: nothing was sent and nothing was measured.",
+      "nodes": ["browser", "cloudfront"],
+      "path": [
+        { "edge": "e_be_rds", "dir": "rev" },
+        { "edge": "e_int_be", "dir": "rev" },
+        { "edge": "e_fe_int", "dir": "rev" },
+        { "edge": "e_alb_fe", "dir": "rev" },
+        { "edge": "e_igw_alb", "dir": "rev" },
+        { "edge": "e_cf_igw", "dir": "rev" },
+        { "edge": "e_browser_cf", "dir": "rev" }
+      ],
+      "refs": []
+    }
+  ],
+  "sideFlows": [
+    { "layer": "health", "title": "Health checks", "text": "Each load balancer probes its targets (/healthz on the frontend, /health on the backend). Unhealthy targets stop receiving traffic and the Auto Scaling group replaces them." },
+    { "layer": "nat", "title": "NAT egress", "text": "Application instances have no public IPs. Package installs and Session Manager use the NAT gateway in the instance's own zone, then the Internet Gateway. Inbound connections from the internet cannot use this path." },
+    { "layer": "security", "title": "Security groups", "text": "Each tier accepts traffic only from the group before it. Rules reference security groups, not address ranges." },
+    { "layer": "replication", "title": "Database replication", "text": "Multi-AZ RDS replicates synchronously to a standby in the other zone and fails over automatically. Clients keep the same endpoint name and must reconnect." }
+  ]
+}

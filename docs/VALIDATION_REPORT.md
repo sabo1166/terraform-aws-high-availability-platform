@@ -32,7 +32,7 @@ Local = runs on this machine without AWS. Mocked = Terraform's `mock_provider`; 
 | 11 | `scripts/check_links.py` (relative Markdown links) | local | 7 files, 0 broken. Negative test with a deliberate broken link: reported it, exit 1 |
 | 12 | Both `user_data` templates rendered, `bash -n` | local | OK; no unrendered `${`/`%{` |
 | 13 | Backend Python app extracted from the rendered script, `py_compile` | local | OK |
-| 14 | README Mermaid block parsed with Mermaid 12.2.0 | local | 1 block, valid `flowchart-v2`. Negative control: a broken diagram was rejected. Syntax only; visual layout was not rendered |
+| 14 | README Mermaid block parsed with Mermaid 12.2.0 | local | Superseded: the Mermaid diagram was later replaced by `docs/architecture.svg` (section 3d) |
 | 15 | `.gitignore` / `.gitattributes` in a throwaway repo | local | 12 of 12 sensitive paths ignored; only `.gitattributes`, `.gitignore`, `.terraform.lock.hcl`, `.tflint.hcl`, `LICENSE`, `*.example` are committable; `*.tftpl` resolves to `eol=lf` |
 | 16 | Provider lock file | local | `providers lock` for 5 platforms re-run: file byte-identical; 5 `h1:` hashes per provider (linux amd64/arm64, darwin amd64/arm64, windows amd64) |
 | 17 | Staging simulation (project copied to a scratch dir, `git init`, `git add -A`) | local | 49 files staged; `.terraform/` ignored; CI's forbidden-files, required-files and credential-pattern rules all pass; no local paths, user names or e-mail addresses; no CRLF in staged blobs; lock file tracked |
@@ -102,6 +102,26 @@ The simulator evaluates only the expression subset used in the workflows (it rej
 Two of my own test mistakes are worth recording: Git Bash rewrote a test argument beginning with `/` (making a leading-slash key test pass wrongly until re-run with path conversion disabled), and a fake `aws` returned a stray non-zero status; neither was a project defect.
 
 **Not verified (needs a real bucket and credentials):** real S3 conditional-write locking, the IAM policies in `REMOTE_STATE.md` (never evaluated by AWS), that `ReadOnlyAccess` covers the guard's reads, and the first CI run against a real bucket. The bucket does not exist and no state was migrated.
+
+## 3d. Architecture diagram, roadmap and interactive page
+
+**What exists.** `docs/architecture.svg` and `docs/roadmap.svg` (static, used in the README), `docs/ROADMAP.md`, and `docs/roadmap/` (`index.html`, `styles.css`, `app.js`, generated `data.js`, sources `roadmap.json` and `flow.json`). None of these existed before: no SVG, HTML or roadmap file was present anywhere in the project or in the sibling folders checked, so nothing was "improved"; everything was created. `scripts/build_visuals.py` generates the SVGs, `ROADMAP.md`, `data.js` and the page's inline diagram from one source, and fails if the Terraform stops matching the drawing. README order is now: title and intro, **Engineering Roadmap & Project Journey**, **Architecture**, then layout and the rest.
+
+**Statuses.** 12 stages: 9 verified locally, 2 documented, 1 planned, **0 verified on AWS**. They are counts, not a percentage. The symbols are simplified originals, not the official AWS Architecture Icons.
+
+| Check | Result |
+|---|---|
+| Diagram facts parsed from the Terraform (AZ count, NAT mode, ASG capacities, ALB scheme, fixed 403 listener, header rule, health-check paths, the five ingress and four egress security-group ports, CloudFront behaviors and HTTPS redirect, database route table, RDS settings, IMDSv2, alarm count) | all match; `build_visuals.py --check` exits 0 |
+| 12 mutations of the Terraform, assets and README (AZ count, ASG capacity, ALB made public, a security-group port, unclosed HTML tag, malformed SVG, README order, README counts, a stage marked verified on AWS, `fetch()` added, missing referenced file, hand-edited generated SVG) | all 12 caught. The first run missed a changed *egress* port (only ingress was checked); egress rules are now checked too |
+| SVGs rendered to PNG (resvg) and inspected | defects found and fixed: oversized arrowheads; the NAT line crossing the VPC title; "DNS lookup" hidden behind a box; a line through the database band label; "AWS: pending" chips overflowing roadmap cards; type too small. The generator also estimates text width against box width and fails when a label may overflow |
+| `html-validate` on `index.html` | 4 findings fixed (three `aria-label`s on elements that ignore them, DOCTYPE style); now exit 0 |
+| `postcss` parse of `styles.css`; `node --check` of `app.js`; XML parse of both SVGs | OK (185 CSS rules) |
+| WCAG contrast of the palette | all 12 text/background pairs checked meet AA; lowest 4.66:1 (dimmest SVG caption), body text 14.7:1 |
+| `tests/roadmap_browser_test.mjs` in headless Chrome (file://) | **61 passed, 0 failed.** Covers: no console errors and no non-file requests; roadmap before architecture; 12 stages and the status counts; open/close, filters, expand all, ArrowDown navigation; Step from idle runs exactly one step; Step during motion completes it; speed select; Play, Pause (the packet freezes while a packet is in flight), resume; run to completion with the "no request was sent" message; every packet starts at the correct end of its connection for its direction (16 movements); main-path connections lit in the expected order; Restart; Reset leaves no residue; jump to a step; layer toggles; keyboard shortcut; reduced motion (no packet, instant steps, no decorative animation); phone viewport (no horizontal page scroll, stacked layout, tap targets of at least 28px) |
+| Mutation tests of the browser suite (pause does not freeze; reset leaves residue; reduced motion ignored; two request steps swapped; roadmap not first; speed select ignored) | all caught. The first version of the pause test passed vacuously (the packet was not on screen when paused); it now requires a packet in flight and fails against the broken page |
+| Whole-repo regression after these changes | `terraform fmt`, `validate`, `terraform test` (12), TFLint, Checkov (235 passed, 0 failed, 32 skipped), `actionlint`, workflow policy tests, state-script tests (12), link check, credential scan: all unchanged. No Terraform, template or lock file was modified |
+
+**Not verified.** How GitHub renders the SVGs (assumed from standard behavior of SVG used as an image: internal `<use>` references and an embedded `<style>`; scripts are never executed there, and none are used); browsers other than Chrome (Firefox, Safari, Edge); real touch devices (a phone viewport was emulated); screen readers and other assistive technology (only automated ARIA and keyboard checks were run); animation smoothness (judged only by logic and screenshots). The diagram and page show configured defaults and a simulation, not any AWS account.
 
 ## 3b. Final review from a fresh clone (before the second push)
 
