@@ -1,0 +1,91 @@
+#!/bin/bash
+# Frontend bootstrap: nginx serving a static page, proxying /api/* to the internal ALB.
+# The AMI's OS was NOT verified when this was written, so the package manager is detected at
+# runtime (dnf / yum / apt-get). Safe to re-run: package installs and file writes are idempotent.
+set -euo pipefail
+exec > >(tee -a /var/log/app-bootstrap.log) 2>&1
+echo "[bootstrap] frontend start $(date -u +%FT%TZ)"
+
+install_pkgs() {
+  if command -v dnf >/dev/null 2>&1; then
+    dnf install -y "$@"
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y "$@" || { command -v amazon-linux-extras >/dev/null 2>&1 && amazon-linux-extras install -y nginx1; }
+  elif command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y
+    apt-get install -y "$@"
+  else
+    echo "[bootstrap] ERROR: no supported package manager (dnf/yum/apt-get)" >&2
+    exit 1
+  fi
+}
+
+command -v nginx >/dev/null 2>&1 || install_pkgs nginx
+command -v curl >/dev/null 2>&1 || install_pkgs curl
+
+# IMDSv2 (tokens required by the launch template)
+TOKEN=$(curl -fsS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 120" || true)
+imds() { curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" "http://169.254.169.254/latest/meta-data/$1" || echo unknown; }
+INSTANCE_ID=$(imds instance-id)
+AZ=$(imds placement/availability-zone)
+
+mkdir -p /usr/share/app/static
+cat > /usr/share/app/index.html <<EOF
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>HA web platform</title>
+<link rel="stylesheet" href="/static/style.css"></head>
+<body><main>
+<h1>HA web platform - frontend tier</h1>
+<p>Served by instance <code>$INSTANCE_ID</code> in <code>$AZ</code>.</p>
+<p>Backend (via internal ALB): <a href="/api/info">/api/info</a> &middot; <a href="/api/db-health">/api/db-health</a></p>
+</main></body></html>
+EOF
+cat > /usr/share/app/static/style.css <<'EOF'
+body{font-family:system-ui,sans-serif;margin:3rem;max-width:42rem}code{background:#eee;padding:0 .3em}
+EOF
+chmod -R a+rX /usr/share/app
+
+# Own the whole config so distro default server blocks (conf.d / sites-enabled) cannot conflict.
+cat > /etc/nginx/nginx.conf <<'EOF'
+worker_processes auto;
+pid /run/nginx.pid;
+events { worker_connections 1024; }
+http {
+  include /etc/nginx/mime.types;
+  default_type application/octet-stream;
+  server_tokens off;
+  access_log /var/log/nginx/access.log;
+  error_log  /var/log/nginx/error.log;
+  # Re-resolve the internal ALB name regularly (its IPs change). 169.254.169.253 = VPC resolver.
+  resolver 169.254.169.253 valid=30s ipv6=off;
+
+  server {
+    listen 80 default_server;
+    root /usr/share/app;
+
+    location = /healthz {
+      access_log off;
+      default_type text/plain;
+      return 200 "ok\n";
+    }
+    location /static/ { expires 1h; }
+    location /api/ {
+      set $upstream "${internal_alb_dns}";
+      proxy_pass http://$upstream;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_connect_timeout 5s;
+      proxy_read_timeout 30s;
+    }
+    location / { try_files $uri /index.html; }
+  }
+}
+EOF
+rm -f /etc/nginx/sites-enabled/default
+
+nginx -t
+systemctl enable nginx
+systemctl restart nginx
+echo "[bootstrap] frontend done $(date -u +%FT%TZ)"

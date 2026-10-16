@@ -1,0 +1,48 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfplan
+tfplan
+plan.out
+plan.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Variable files (may contain real domains / emails). Only the .example is committed.
+*.tfvars
+*.tfvars.json
+!terraform.tfvars.example
+
+# Real backend config (only backend.tf.example is committed)
+backend.tf
+*.tfbackend
+
+# Secrets / keys
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+.env
+.env.*
+*.secret
+credentials
+.aws/
+
+# Local tooling
+.claude/
+*.log
+.venv/
+__pycache__/
+.checkov*/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

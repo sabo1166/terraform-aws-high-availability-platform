@@ -1,0 +1,18 @@
+# Optional remote state (S3 with native lockfile locking; DynamoDB locking is deprecated).
+# Copy to backend.tf (git-ignored) and supply values at init time so no bucket name is committed:
+#
+#   terraform init \
+#     -backend-config="bucket=<YOUR_STATE_BUCKET>" \
+#     -backend-config="key=ha-web/lab/terraform.tfstate" \
+#     -backend-config="region=us-east-1"
+#
+# The bucket must already exist, be private, versioned and encrypted. State contains the
+# CloudFront origin-verify header value (sensitive) - restrict bucket access accordingly.
+# Bootstrap commands: docs/GITHUB_ACTIONS.md
+
+terraform {
+  backend "s3" {
+    encrypt      = true
+    use_lockfile = true
+  }
+}

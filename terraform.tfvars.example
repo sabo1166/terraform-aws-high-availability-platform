@@ -1,0 +1,29 @@
+# Copy to terraform.tfvars (git-ignored) and edit. Placeholders only - never commit real values.
+
+project_name = "ha-web"
+environment  = "lab"
+
+# --- Custom domain (optional) -------------------------------------------------------------
+# Leave BOTH commented out to use the generated https://dxxxx.cloudfront.net URL.
+# Set BOTH to enable ACM + Route 53 records. The hosted zone must already exist (public).
+# domain_name      = "app.example.com"   # PLACEHOLDER - use a domain you own
+# hosted_zone_name = "example.com"       # PLACEHOLDER - existing public Route 53 zone
+
+# --- AMI (default is the mandated AMI; validated at plan time) ----------------------------
+# ami_id = "ami-0ed59cbb87dfa8dba"
+# If the AMI turns out to be arm64, switch instance types, e.g. "t4g.micro".
+# Pin the expected AMI owner after checking it with describe-images (plan then fails on a mismatch):
+# ami_owner_id = "123456789012"   # PLACEHOLDER
+# frontend_instance_type = "t3.micro"
+# backend_instance_type  = "t3.micro"
+
+# --- Cost levers ---------------------------------------------------------------------------
+# nat_gateway_mode = "single"   # ~half the NAT cost; loses AZ-level egress resilience
+# az_count         = 2
+
+# --- Teardown (see docs/COST_AND_CLEANUP.md) -----------------------------------------------
+# db_deletion_protection  = false
+# db_skip_final_snapshot  = true
+# alb_deletion_protection = false
+
+# alarm_email = "you@example.com"  # PLACEHOLDER

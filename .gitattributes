@@ -1,0 +1,6 @@
+# Force LF everywhere. The *.tftpl files become EC2 user_data (bash); a CRLF checkout on Windows
+# would make every bootstrap script fail with "\r: command not found".
+* text=auto eol=lf
+*.tftpl text eol=lf
+*.sh text eol=lf
+*.svg text eol=lf

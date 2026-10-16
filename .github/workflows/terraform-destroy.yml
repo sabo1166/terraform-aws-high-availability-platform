@@ -1,0 +1,121 @@
+name: Terraform Destroy (manual)
+
+# DESTRUCTIVE. Manual only. Destroys everything in this stack's state (and only that state).
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub Environment (must exist, with required reviewers)
+        type: choice
+        options: [lab]
+        default: lab
+      confirmation:
+        description: 'Type exactly: DESTROY us-east-1'
+        type: string
+        required: true
+      skip_final_snapshot:
+        description: Skip the final RDS snapshot (data is then unrecoverable)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-state-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: "1.16.2"
+  TF_IN_AUTOMATION: "true"
+  AWS_REGION: us-east-1
+
+jobs:
+  validate-inputs:
+    name: "1 - Validate inputs"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check branch and confirmation phrase
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error title=Wrong branch::Destroy may only run from main (got $REF)."; exit 1
+          fi
+          if [ "$CONFIRMATION" != "DESTROY us-east-1" ]; then
+            echo "::error title=Confirmation mismatch::Type exactly: DESTROY us-east-1"; exit 1
+          fi
+          echo "Inputs valid."
+
+  destroy:
+    name: "2 - Destroy"
+    needs: validate-inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Require remote state
+        env:
+          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+        run: |
+          if [ -z "$STATE_BUCKET" ]; then
+            echo "::error title=Remote state required::Set repository variable TF_STATE_BUCKET; with empty local state destroy would do nothing."
+            exit 1
+          fi
+
+      - name: Authenticate to AWS
+        uses: ./.github/actions/aws-auth
+        with:
+          role-arn: ${{ vars.AWS_ROLE_ARN }}
+          access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Optional inputs from repository variables
+        env:
+          V_DOMAIN: ${{ vars.TF_VAR_DOMAIN_NAME }}
+          V_ZONE: ${{ vars.TF_VAR_HOSTED_ZONE_NAME }}
+        run: |
+          [ -n "$V_DOMAIN" ] && echo "TF_VAR_domain_name=$V_DOMAIN" >> "$GITHUB_ENV"
+          [ -n "$V_ZONE" ] && echo "TF_VAR_hosted_zone_name=$V_ZONE" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: terraform init
+        env:
+          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          STATE_KEY: ${{ vars.TF_STATE_KEY }}
+        run: |
+          cp backend.tf.example backend.tf
+          terraform init -input=false -no-color \
+            -backend-config="bucket=$STATE_BUCKET" \
+            -backend-config="key=${STATE_KEY:-ha-web/lab/terraform.tfstate}" \
+            -backend-config="region=us-east-1"
+
+      - name: Lift deletion protection (in-place update of RDS and ALBs only)
+        env:
+          SKIP_SNAPSHOT: ${{ inputs.skip_final_snapshot }}
+        run: |
+          # Deletion protection is a real guard rail, so it must be lifted deliberately before destroy.
+          cat > teardown.auto.tfvars <<EOF
+          db_deletion_protection  = false
+          alb_deletion_protection = false
+          db_skip_final_snapshot  = ${SKIP_SNAPSHOT}
+          EOF
+          terraform apply -input=false -no-color -auto-approve -lock-timeout=120s \
+            -target=module.database.aws_db_instance.main -target=aws_lb.external -target=aws_lb.internal
+
+      - name: terraform plan -destroy
+        run: terraform plan -destroy -input=false -no-color -lock-timeout=120s -out=destroy.tfplan
+
+      - name: terraform apply (destroy plan)
+        run: terraform apply -input=false -no-color -lock-timeout=120s destroy.tfplan
