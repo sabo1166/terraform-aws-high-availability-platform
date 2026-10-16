@@ -1,0 +1,96 @@
+name: Initialise the Terraform S3 backend
+description: >
+  The single place CI initialises remote state, so plan, apply and destroy cannot disagree. Checks the
+  bucket, runs terraform init against the S3 backend declared in backend.tf (bucket, key and region
+  are passed with -backend-config because backend blocks cannot use variables), checks the workspace,
+  and refuses to continue when the state is empty but this stack's infrastructure already exists.
+  Requires: AWS credentials already configured, Terraform on PATH, the repository checked out.
+
+inputs:
+  state-bucket:
+    description: S3 bucket holding the state (repository variable TF_STATE_BUCKET). Required.
+    required: true
+  state-key:
+    description: State object key (repository variable TF_STATE_KEY). Empty = ha-web/lab/terraform.tfstate.
+    required: false
+    default: ""
+  state-region:
+    description: Region of the BUCKET (repository variable TF_STATE_REGION). Empty = us-east-1.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Validate backend settings
+      shell: bash
+      env:
+        BUCKET: ${{ inputs.state-bucket }}
+        KEY: ${{ inputs.state-key }}
+        REGION: ${{ inputs.state-region }}
+      run: |
+        if [ -z "$BUCKET" ]; then
+          echo "::error title=Remote state required::Set repository variable TF_STATE_BUCKET to an existing, private, versioned S3 bucket (docs/REMOTE_STATE.md). CI never plans against an empty or local state."
+          exit 1
+        fi
+        if ! printf '%s' "$BUCKET" | grep -Eq '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'; then
+          echo "::error title=Invalid bucket name::TF_STATE_BUCKET is not a valid S3 bucket name."; exit 1
+        fi
+        key=${KEY:-ha-web/lab/terraform.tfstate}
+        case "$key" in
+          /* | "") echo "::error title=Invalid state key::TF_STATE_KEY must not be empty or start with '/'."; exit 1 ;;
+          *.tfstate) ;;
+          *) echo "::error title=Invalid state key::TF_STATE_KEY must end in .tfstate (got '$key')."; exit 1 ;;
+        esac
+        {
+          echo "TFB_KEY=$key"
+          echo "TFB_REGION=${REGION:-us-east-1}"
+        } >> "$GITHUB_ENV"
+
+    - name: Check the state bucket (read-only)
+      shell: bash
+      env:
+        BUCKET: ${{ inputs.state-bucket }}
+      run: bash "$GITHUB_WORKSPACE/scripts/check_state_bucket.sh" "$BUCKET" "$TFB_REGION"
+
+    - name: terraform init (S3 backend, committed lock file)
+      shell: bash
+      env:
+        BUCKET: ${{ inputs.state-bucket }}
+      run: |
+        terraform init -input=false -no-color -lockfile=readonly \
+          -backend-config="bucket=$BUCKET" \
+          -backend-config="key=$TFB_KEY" \
+          -backend-config="region=$TFB_REGION"
+
+    - name: Check workspace
+      shell: bash
+      run: |
+        ws=$(terraform workspace show)
+        if [ "$ws" != "default" ]; then
+          echo "::error title=Unexpected workspace::Selected workspace is '$ws'; this project uses only 'default'."; exit 1
+        fi
+
+    - name: Refuse an empty state when the infrastructure already exists
+      shell: bash
+      run: |
+        # On a key that has never held state, `terraform state list` exits 1 with "No state file was
+        # found!". That one message means "empty"; any other failure is a real error.
+        set +e
+        listing=$(terraform state list 2>&1)
+        rc=$?
+        set -e
+        if [ "$rc" -ne 0 ]; then
+          case "$listing" in
+            *"No state file was found"*) listing="" ;;
+            *) echo "::error title=Cannot read Terraform state::${listing:0:300}"; exit 1 ;;
+          esac
+        fi
+        count=$(printf '%s' "$listing" | grep -c . || true)
+        if [ "$count" -gt 0 ]; then
+          echo "State s3://<bucket>/$TFB_KEY holds $count resource(s)."
+          exit 0
+        fi
+        name=$(echo 'local.name' | terraform console -no-color | tr -d '"')
+        echo "State is empty; checking whether '$name-*' infrastructure already exists."
+        bash "$GITHUB_WORKSPACE/scripts/check_state_vs_infra.sh" "$name" "$AWS_REGION"

@@ -20,8 +20,7 @@ terraform.rc
 *.tfvars.json
 !terraform.tfvars.example
 
-# Real backend config (only backend.tf.example is committed)
-backend.tf
+# Real backend settings (bucket name etc.). backend.tf itself IS committed; it holds no values.
 *.tfbackend
 
 # Secrets / keys

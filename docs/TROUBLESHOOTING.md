@@ -126,4 +126,7 @@ The `*-rt-db-isolated` table must show only the `local` route.
 terraform validate && terraform plan          # preflight/AMI errors surface here, with explanatory messages
 terraform state list | head -n 50
 terraform force-unlock <LOCK_ID>              # only if a crashed run left a stale lock
+# Remote state problems (bucket checks, stale locks, restoring a version, migrating state): docs/REMOTE_STATE.md
+aws s3api get-bucket-versioning --bucket <STATE_BUCKET>
+aws s3api list-object-versions --bucket <STATE_BUCKET> --prefix ha-web/lab/
 ```

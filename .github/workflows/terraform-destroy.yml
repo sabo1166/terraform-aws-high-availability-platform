@@ -90,16 +90,12 @@ jobs:
           [ -n "$V_ZONE" ] && echo "TF_VAR_hosted_zone_name=$V_ZONE" >> "$GITHUB_ENV"
           exit 0
 
-      - name: terraform init
-        env:
-          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-          STATE_KEY: ${{ vars.TF_STATE_KEY }}
-        run: |
-          cp backend.tf.example backend.tf
-          terraform init -input=false -no-color \
-            -backend-config="bucket=$STATE_BUCKET" \
-            -backend-config="key=${STATE_KEY:-ha-web/lab/terraform.tfstate}" \
-            -backend-config="region=us-east-1"
+      - name: Initialise the S3 backend
+        uses: ./.github/actions/terraform-backend
+        with:
+          state-bucket: ${{ vars.TF_STATE_BUCKET }}
+          state-key: ${{ vars.TF_STATE_KEY }}
+          state-region: ${{ vars.TF_STATE_REGION }}
 
       - name: Lift deletion protection (in-place update of RDS and ALBs only)
         env:

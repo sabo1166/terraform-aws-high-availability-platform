@@ -5,7 +5,7 @@ Everything below is a manual step; nothing here has been done for you. `[ ]` ite
 ## Before the first push
 
 - [ ] `.gitattributes` forces LF line endings. Keep it: a CRLF checkout of `templates/*.tftpl` on Windows would break the bootstrap scripts.
-- [ ] Review the file list: `git status --short` should show only source files (no `.terraform/`, `*.tfstate`, `*.tfvars`, `backend.tf`, plans).
+- [ ] Review the file list: `git status --short` should show only source files (no `.terraform/`, `*.tfstate`, `*.tfvars`, `*.tfbackend`, plans). `backend.tf` itself IS tracked: it holds no values.
 - [ ] `git diff --cached` (after `git add`) read through once. Confirm no account IDs, domains or e-mail addresses you consider private.
 - [ ] `LICENSE` is Apache-2.0 (unmodified text from apache.org). If you want a copyright notice in source files or a `NOTICE` file, add your own name; none was invented.
 - [ ] Create the repository **private first**, and make it public only after the checks below pass.
@@ -17,7 +17,8 @@ Everything below is a manual step; nothing here has been done for you. `[ ]` ite
 - [ ] Settings → Branches: protect `main` (require PR, require the *Terraform CI* checks).
 - [ ] Settings → Code security: enable secret scanning and push protection; enable Dependabot for `github-actions`.
 - [ ] Authentication (see [`GITHUB_ACTIONS.md`](GITHUB_ACTIONS.md)): prefer OIDC with two roles (repository **variables** `AWS_PLAN_ROLE_ARN`, `AWS_APPLY_ROLE_ARN`). Trust policy subjects: plan role `...:ref:refs/heads/main`, apply role `...:environment:lab`; verify them with the read-only `aws iam get-role` commands in that file. Use `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` secrets only as a fallback. Never paste credentials into issues, logs or chat.
-- [ ] Variables: `TF_STATE_BUCKET` (**required** for the main-branch plan and apply), optional `TF_STATE_KEY`, `TF_VAR_DOMAIN_NAME`, `TF_VAR_HOSTED_ZONE_NAME`.
+- [ ] **Remote state first** ([`REMOTE_STATE.md`](REMOTE_STATE.md)): check whether state or infrastructure already exists (section "Is there existing state?"), then create the bucket, then set the variable `TF_STATE_BUCKET` (**required**; optional `TF_STATE_KEY`, `TF_STATE_REGION`). If state already exists, migrate it before the first CI run.
+- [ ] Optional variables: `TF_VAR_DOMAIN_NAME`, `TF_VAR_HOSTED_ZONE_NAME`.
 - [ ] Secret `TF_PLAN_ENCRYPTION_KEY` (**required**; `openssl rand -base64 48`). Without it, every push to `main` fails at job 5 with an explicit message.
 
 ## Checks to run with working AWS credentials (not done yet)

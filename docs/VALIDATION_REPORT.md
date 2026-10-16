@@ -75,6 +75,34 @@ This round:
 
 The simulator evaluates only the expression subset used in the workflows (it rejects anything else), so it checks this repository's conditions, not GitHub's evaluator in general. **The redesigned workflow has not run on GitHub**, and no AWS authentication has been tested: the OIDC provider, roles, trust policies, secrets, variables and the `lab` Environment are not configured (Environment reviewers: not verified beyond the zero-count observation above).
 
+## 3c. Remote state (S3 backend, native locking)
+
+**Findings.** No state or plan file exists in the repository directory and the backend was never initialised locally; every GitHub Actions run so far skipped the apply job and uploaded no artifact, so CI cannot have created anything. AWS could not be queried (credentials invalid), so a manual apply elsewhere cannot be ruled out. The old design kept the backend block in a git-ignored file that each workflow step copied (three copies, hard-coded key and region) and allowed a plan from "EMPTY state".
+
+**Changes.** `backend.tf` is now committed as a partial S3 configuration (`encrypt`, `use_lockfile`; no DynamoDB) and bucket, key and region are passed at `init`. All AWS-backed jobs initialise through one action, `.github/actions/terraform-backend`, which requires `TF_STATE_BUCKET`, checks the bucket (reachable, versioned, public access blocked, encrypted), checks the workspace, and, if the state is empty, refuses to continue when this stack's infrastructure already exists (fails closed if it cannot tell). The plan role's state access is read-only. Procedures: `docs/REMOTE_STATE.md`.
+
+**Tested locally against moto 5.2.4 (a local S3 emulator; not real S3) and a fake AWS CLI:**
+
+| Test | Result |
+|---|---|
+| committed `backend.tf` with `init -backend=false`, `validate`, `terraform test` (12), TFLint, Checkov (235 passed, 0 failed) | pass |
+| `terraform init -migrate-state` of a hand-built local state (serial 7) into the S3 backend | state copied, object versioned, `plan` reports "No changes", local file emptied and `.backup` kept |
+| plain `terraform init` with existing local state, non-interactive | refuses ("Can't ask approval for state migration"); does not create an empty remote state |
+| native lock: foreign `.tflock` object | competing run fails with "Error acquiring the state lock" (HTTP 412); `-lock=false` plan unaffected; `terraform force-unlock` clears it |
+| S3 requests per operation (from the emulator's request log) | `init`, `state list`, `console`, `plan -lock=false`: list + GET/HEAD of the state object only; locking plan adds PUT/GET/DELETE on `.tflock`. Basis for the IAM policies |
+| `terraform state list` on a never-used key | exits 1 "No state file was found!" (found while testing; the action treats exactly this as empty, other errors fail) |
+| `scripts/check_state_bucket.sh` against moto | missing bucket, no versioning, no / partial public-access block, no encryption each rejected; a fully configured bucket accepted |
+| `scripts/check_state_vs_infra.sh` against moto | empty account passes; VPC/IAM role with this stack's names rejected; other prefix passes; unreachable API exits 2 (fails closed) |
+| `tests/state_scripts_test.sh` (fake AWS CLI, runs in CI) | 12 passed; a mutation making "infrastructure found" non-fatal is caught |
+| the composite action's real `run:` steps, extracted and executed in order against moto | first deployment passes; empty state with existing infrastructure stops; existing state recognised; unfit bucket, missing bucket, key with leading `/`, key without `.tfstate` all refused |
+| `scripts/check_workflows.py` new backend rules | partial config only, no DynamoDB, `backend.tf` not git-ignored, no inline backend init in any workflow; 5 mutations all rejected |
+| `actionlint` (shellcheck) and `shellcheck` on the new scripts | exit 0 (after fixing a stray `
+` it found in a CI step) |
+
+Two of my own test mistakes are worth recording: Git Bash rewrote a test argument beginning with `/` (making a leading-slash key test pass wrongly until re-run with path conversion disabled), and a fake `aws` returned a stray non-zero status; neither was a project defect.
+
+**Not verified (needs a real bucket and credentials):** real S3 conditional-write locking, the IAM policies in `REMOTE_STATE.md` (never evaluated by AWS), that `ReadOnlyAccess` covers the guard's reads, and the first CI run against a real bucket. The bucket does not exist and no state was migrated.
+
 ## 3b. Final review from a fresh clone (before the second push)
 
 The committed repository was cloned into a scratch directory and checked there, so the result does not depend on untracked files: `terraform fmt -check`, `init -lockfile=readonly`, `validate`, `terraform test` (12 of 12), TFLint (exit 0), Checkov (235 passed, 0 failed, 32 skipped), `actionlint` (exit 0) and `check_links.py` (0 broken) all pass. Line endings were measured by counting 0x0D bytes with Python: 0 in the committed blobs of every tracked file and 0 in the fresh clone's bootstrap templates, with `core.autocrlf=true` on this machine, so `.gitattributes` works. An earlier `grep -c` probe reported CRs; it was a false positive (the count equalled the line count) and was disregarded after this direct measurement.

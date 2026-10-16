@@ -182,6 +182,36 @@ def main() -> int:
     check(all("plan.log" not in str(s.get("with", "")) for s in upload), "plan.log must not be uploaded")
     check(all(not str(s.get("with", {}).get("path", "")).endswith("tfplan") for s in upload), "the unencrypted plan must not be uploaded")
 
+    # ---------------------------------------------------------------- remote state design
+    backend = (ROOT / "backend.tf").read_text(encoding="utf-8") if (ROOT / "backend.tf").exists() else ""
+    code = "\n".join(l for l in backend.splitlines() if not l.lstrip().startswith("#"))
+    check('backend "s3"' in code, "backend.tf must declare the S3 backend (and be committed)")
+    check(re.search(r"use_lockfile\s*=\s*true", code) is not None, "backend.tf must use native S3 locking (use_lockfile = true)")
+    check(re.search(r"encrypt\s*=\s*true", code) is not None, "backend.tf must enable encrypt = true")
+    check("dynamodb_table" not in code, "backend.tf must not use deprecated DynamoDB locking")
+    check(not re.search(r"^\s*(bucket|key|region)\s*=", code, re.M), "backend.tf must be a partial configuration (no bucket/key/region values)")
+    gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines() if (ROOT / ".gitignore").exists() else []
+    check("backend.tf" not in [l.strip() for l in gitignore], "backend.tf must not be git-ignored")
+    check("*.tfbackend" in [l.strip() for l in gitignore], "*.tfbackend (real bucket settings) must stay git-ignored")
+
+    backend_action = ROOT / ".github" / "actions" / "terraform-backend" / "action.yml"
+    ba = backend_action.read_text(encoding="utf-8") if backend_action.exists() else ""
+    for needle in ("-backend-config=\"bucket=", "-backend-config=\"key=", "-backend-config=\"region=", "-lockfile=readonly",
+                   "check_state_bucket.sh", "check_state_vs_infra.sh", "workspace show"):
+        check(needle in ba, f"terraform-backend action must contain {needle!r}")
+    for f in sorted(WF_DIR.glob("*.yml")):
+        wf_text = f.read_text(encoding="utf-8")
+        check("-backend-config" not in wf_text and "cp backend" not in wf_text, f"{f.name}: backend must be initialised only through the terraform-backend action")
+    for wf_name, wf_def, job_names in (("terraform.yml", tf, ["terraform-plan", "terraform-apply"]), ("terraform-destroy.yml", destroy, ["destroy"])):
+        for jn in job_names:
+            steps = wf_def["jobs"][jn]["steps"]
+            check(any(str(s.get("uses", "")) == "./.github/actions/terraform-backend" for s in steps), f"{wf_name}:{jn} must initialise state via the terraform-backend action")
+        for jn, job in wf_def["jobs"].items():
+            for s in job.get("steps", []):
+                run = str(s.get("run", ""))
+                if "terraform init" in run:
+                    check("-backend=false" in run, f"{wf_name}:{jn}: `terraform init` outside the backend action must use -backend=false")
+
     # ---------------------------------------------------------------- scenario matrix
     scenarios = [
         # description, ctx, forced failures, expected (plan, apply)

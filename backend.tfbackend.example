@@ -1,0 +1,4 @@
+# Copy to backend.tfbackend (git-ignored) and fill in. PLACEHOLDERS only.
+bucket = "your-terraform-state-bucket"
+key    = "ha-web/lab/terraform.tfstate"
+region = "us-east-1" # the region the BUCKET is in

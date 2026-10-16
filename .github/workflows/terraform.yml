@@ -45,7 +45,9 @@ jobs:
           for f in versions.tf variables.tf outputs.tf .gitignore .gitattributes README.md terraform.tfvars.example \
                    docs/ARCHITECTURE.md docs/TROUBLESHOOTING.md docs/COST_AND_CLEANUP.md \
                    docs/VALIDATION_REPORT.md docs/GITHUB_ACTIONS.md docs/PUBLISHING_CHECKLIST.md \
-                   LICENSE .tflint.hcl scripts/check_links.py scripts/check_workflows.py; do
+                   LICENSE .tflint.hcl backend.tf backend.tfbackend.example docs/REMOTE_STATE.md \
+                   scripts/check_links.py scripts/check_workflows.py scripts/check_state_bucket.sh \
+                   scripts/check_state_vs_infra.sh tests/state_scripts_test.sh; do
             if [ -f "$f" ]; then echo "ok       $f"; else echo "::error file=$f::Required file is missing"; missing=1; fi
           done
           exit $missing
@@ -77,6 +79,9 @@ jobs:
 
       - name: Workflow policy and event/dependency matrix
         run: python scripts/check_workflows.py
+
+      - name: Remote-state guard scripts (fake AWS CLI; no AWS access)
+        run: bash tests/state_scripts_test.sh
 
   terraform-format:
     name: "2 - Terraform format"
@@ -169,14 +174,12 @@ jobs:
           STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
           PLAN_KEY: ${{ secrets.TF_PLAN_ENCRYPTION_KEY }}
         run: |
-          if [ "$EVENT" = "push" ]; then
-            # A push plan feeds the apply job, so it needs shared state and an artifact key.
-            if [ -z "$STATE_BUCKET" ]; then
-              echo "::error title=Remote state required::Set repository variable TF_STATE_BUCKET. A plan from empty local state would try to create everything again."; exit 1
-            fi
-            if [ -z "$PLAN_KEY" ]; then
-              echo "::error title=Plan encryption key missing::Set repository secret TF_PLAN_ENCRYPTION_KEY (e.g. output of: openssl rand -base64 48). The plan file can contain secrets and is never uploaded unencrypted."; exit 1
-            fi
+          # Every AWS-backed run uses the shared S3 state. There is no local or empty-state path.
+          if [ -z "$STATE_BUCKET" ]; then
+            echo "::error title=Remote state required::Set repository variable TF_STATE_BUCKET to an existing, private, versioned S3 bucket (docs/REMOTE_STATE.md). CI never plans against an empty or local state."; exit 1
+          fi
+          if [ "$EVENT" = "push" ] && [ -z "$PLAN_KEY" ]; then
+            echo "::error title=Plan encryption key missing::Set repository secret TF_PLAN_ENCRYPTION_KEY (e.g. output of: openssl rand -base64 48). The plan file can contain secrets and is never uploaded unencrypted."; exit 1
           fi
           echo "Configuration present."
 
@@ -197,28 +200,12 @@ jobs:
           [ -n "$V_ZONE" ] && echo "TF_VAR_hosted_zone_name=$V_ZONE" >> "$GITHUB_ENV"
           exit 0
 
-      - name: terraform init
-        env:
-          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-          STATE_KEY: ${{ vars.TF_STATE_KEY }}
-        run: |
-          if [ -n "$STATE_BUCKET" ]; then
-            cp backend.tf.example backend.tf
-            terraform init -input=false -no-color -lockfile=readonly \
-              -backend-config="bucket=$STATE_BUCKET" \
-              -backend-config="key=${STATE_KEY:-ha-web/lab/terraform.tfstate}" \
-              -backend-config="region=us-east-1"
-          else
-            echo "::warning title=No remote state::TF_STATE_BUCKET is unset. This manual plan starts from EMPTY state and shows everything as 'create'."
-            terraform init -input=false -no-color -lockfile=readonly
-          fi
-
-      - name: Check workspace
-        run: |
-          ws=$(terraform workspace show)
-          if [ "$ws" != "default" ]; then
-            echo "::error title=Unexpected workspace::Selected workspace is '$ws'; this project uses only 'default'."; exit 1
-          fi
+      - name: Initialise the S3 backend
+        uses: ./.github/actions/terraform-backend
+        with:
+          state-bucket: ${{ vars.TF_STATE_BUCKET }}
+          state-key: ${{ vars.TF_STATE_KEY }}
+          state-region: ${{ vars.TF_STATE_REGION }}
 
       - name: terraform plan
         id: plan
@@ -335,23 +322,12 @@ jobs:
           access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-      - name: terraform init (same backend, key and lock file as the plan)
-        env:
-          STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-          STATE_KEY: ${{ vars.TF_STATE_KEY }}
-        run: |
-          cp backend.tf.example backend.tf
-          terraform init -input=false -no-color -lockfile=readonly \
-            -backend-config="bucket=$STATE_BUCKET" \
-            -backend-config="key=${STATE_KEY:-ha-web/lab/terraform.tfstate}" \
-            -backend-config="region=us-east-1"
-
-      - name: Check workspace
-        run: |
-          ws=$(terraform workspace show)
-          if [ "$ws" != "default" ]; then
-            echo "::error title=Unexpected workspace::Selected workspace is '$ws'; this project uses only 'default'."; exit 1
-          fi
+      - name: Initialise the S3 backend (same bucket, key and lock file as the plan)
+        uses: ./.github/actions/terraform-backend
+        with:
+          state-bucket: ${{ vars.TF_STATE_BUCKET }}
+          state-key: ${{ vars.TF_STATE_KEY }}
+          state-region: ${{ vars.TF_STATE_REGION }}
 
       - name: terraform apply (exactly the saved plan)
         # Applying a plan file needs no -auto-approve and cannot silently produce a different plan:

@@ -36,6 +36,7 @@ flowchart TB
 | Path | Purpose |
 |---|---|
 | `main.tf` | Instantiates the modules |
+| `backend.tf` | S3 backend, partial configuration (values supplied at `init`) |
 | `data.tf` | AMI lookup and plan-time checks |
 | `security_groups.tf`, `alb.tf` | Security-group chain, both ALBs, target groups, origin-verify secret |
 | `modules/network` | VPC, subnets, NAT, route tables, S3 gateway endpoint, flow logs |
@@ -47,7 +48,7 @@ flowchart TB
 | `tests/` | `terraform test` suite (mocked provider) |
 | `scripts/` | `check_links.py` (broken relative Markdown links) and `check_workflows.py` (workflow policy and event/dependency matrix); both run in CI job 1 |
 | `.tflint.hcl` | TFLint config (terraform + AWS rulesets) |
-| `docs/` | Architecture, troubleshooting, cost/cleanup, CI setup, publishing checklist, validation record |
+| `docs/` | Architecture, remote state, troubleshooting, cost/cleanup, CI setup, publishing checklist, validation record |
 
 ## Design notes
 
@@ -67,7 +68,7 @@ flowchart TB
 
 **Custom domain (optional).** Set both `domain_name` (`app.example.com`) and `hosted_zone_name` (`example.com`) to get an ACM certificate (DNS-validated) and A/AAAA alias records in an existing public hosted zone. With neither set you get the `*.cloudfront.net` URL.
 
-**State.** Local by default; `*.tfstate` is git-ignored. For shared or CI use, copy `backend.tf.example` to `backend.tf` (S3 backend with native lockfile locking, Terraform >= 1.10). State contains the origin-verify secret, so keep the bucket private, versioned and access-restricted.
+**State.** Remote, in a private versioned S3 bucket with native S3 lockfile locking (Terraform >= 1.10; DynamoDB locking is deprecated, so no table). `backend.tf` is committed as a partial configuration; the bucket, key and region are supplied at `terraform init` (locally via `backend.tfbackend`, in CI from the `TF_STATE_BUCKET`, `TF_STATE_KEY`, `TF_STATE_REGION` repository variables). CI never plans against a local or empty state, and refuses to continue when the state is empty but this stack's infrastructure already exists. State holds the origin-verify secret, so keep the bucket private. Bucket setup, IAM permissions, migrating existing state and recovery: [`docs/REMOTE_STATE.md`](docs/REMOTE_STATE.md).
 
 ### The AMI
 
@@ -89,14 +90,16 @@ If it is `arm64`, set `frontend_instance_type` and `backend_instance_type` to Gr
 ## Prerequisites
 
 - Terraform >= 1.10, AWS CLI v2, credentials for the target account
+- A private, versioned S3 bucket for state (not created by this repository; see [`docs/REMOTE_STATE.md`](docs/REMOTE_STATE.md))
 - For a custom domain: an existing public Route 53 hosted zone for it
 - The AMI above visible to your account in `us-east-1`
 
 ## Usage
 
 ```bash
-cp terraform.tfvars.example terraform.tfvars   # git-ignored; edit as needed
-terraform init
+cp terraform.tfvars.example terraform.tfvars        # git-ignored; edit as needed
+cp backend.tfbackend.example backend.tfbackend      # git-ignored; your state bucket (docs/REMOTE_STATE.md)
+terraform init -backend-config=backend.tfbackend
 terraform plan
 terraform apply          # billable - read docs/COST_AND_CLEANUP.md first
 terraform output public_url
@@ -114,6 +117,7 @@ tflint --init && tflint --recursive --format compact
 checkov -d . --framework terraform --compact --quiet --skip-download
 python3 scripts/check_links.py
 python3 scripts/check_workflows.py            # needs PyYAML
+bash tests/state_scripts_test.sh               # remote-state guard scripts, fake AWS CLI
 ```
 
 `terraform test` (12 runs, mocked provider, so it proves the Terraform logic and guard rails, not that AWS accepts the resources) checks the HA defaults (two subnets per tier, NAT per AZ, Multi-AZ encrypted private RDS, ASG minimum 2 with ELB health checks, IMDSv2, HTTPS redirect), domain gating, single-NAT mode, and that bad input is rejected (AMI architecture or owner mismatch, engine/parameter-family mismatch, storage ceiling below initial storage, domain without zone, `min = 1`, other regions). Checkov findings that are intentional are suppressed inline with a reason (`grep -rn "checkov:skip" .`).

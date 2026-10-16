@@ -1,5 +1,5 @@
 terraform {
-  # >= 1.10 is required for native S3 state locking (use_lockfile) in backend.tf.example
+  # >= 1.10 is required for native S3 state locking (use_lockfile) in backend.tf
   required_version = ">= 1.10.0"
 
   required_providers {
@@ -14,8 +14,7 @@ terraform {
   }
 }
 
-# State: local by default (single-user lab; never commit *.tfstate). For team/CI use,
-# copy backend.tf.example to backend.tf - see docs/GITHUB_ACTIONS.md.
+# State: remote S3 backend declared in backend.tf (partial configuration; see docs/REMOTE_STATE.md).
 
 provider "aws" {
   region = var.region

@@ -18,7 +18,7 @@
 | Secrets Manager | 1 RDS-managed secret | ~$0.40/mo + API calls | |
 | SNS | 1 topic | negligible | |
 | S3 gateway endpoint | 1 | free | |
-| S3 state bucket (if you create one) | 1 | pennies | created outside this stack |
+| S3 state bucket (create it first; [`REMOTE_STATE.md`](REMOTE_STATE.md)) | 1 | pennies (versioned state objects are small) | created outside this stack, so `terraform destroy` leaves it and its history in place |
 
 Cheaper lab levers (documented trade-offs): `nat_gateway_mode = "single"`; `enable_flow_logs = false`; `*_capacity` min stays ≥ 2 by validation (HA); `db_multi_az = false` halves RDS cost but removes the DB failover guarantee. **Stop paying: destroy the stack.** (EC2/RDS "stop" does not stop NAT/ALB charges, and Multi-AZ RDS cannot be stopped indefinitely.)
 

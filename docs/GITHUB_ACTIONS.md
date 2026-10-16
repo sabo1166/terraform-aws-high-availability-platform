@@ -34,7 +34,7 @@ The current workflow deliberately never uses `always()` outside the summary job,
 2. The plan file can contain secret state values (for example the CloudFront origin-verify header), and artifacts of a public repository are downloadable by any GitHub user. So the plan is packed with run metadata, **encrypted with AES-256 (OpenSSL, PBKDF2)** using the secret `TF_PLAN_ENCRYPTION_KEY`, and only then uploaded, and only after a successful plan. The unencrypted plan and `plan.log` are never uploaded.
 3. The SHA-256 of the encrypted file is a job output (a different channel from the artifact store). Job 6 refuses the artifact if the digest differs, if it is missing, if decryption fails, or if the metadata names a different commit or run. Each failure ends with "Nothing was applied."
 4. Job 6 applies `tfplan` itself (`terraform apply tfplan`), not a fresh plan. Terraform rejects a saved plan whose state is stale, so a change between plan and approval fails instead of applying something unreviewed. Re-run the workflow to re-plan.
-5. Both jobs use the same backend (`TF_STATE_BUCKET`, `TF_STATE_KEY`), `-lockfile=readonly`, the repository root as working directory, and the same `TF_VAR_*` repository variables. The plan embeds its variable values. Both check that the workspace is `default`.
+5. Both jobs initialise state through the same action (`.github/actions/terraform-backend`): the same bucket, key and region, `-lockfile=readonly`, the repository root as working directory, and the same `TF_VAR_*` repository variables (the plan embeds its variable values). The action checks the bucket, the `default` workspace, and refuses to continue when the state is empty but this stack's infrastructure already exists. There is no local or empty-state path. Details: [`REMOTE_STATE.md`](REMOTE_STATE.md).
 6. Logs and the run summary show only resource **addresses and actions**, never attribute values. Terraform masks `sensitive` values in its own output.
 7. Plan artifacts expire after 5 days; the artifact name includes the commit SHA and run ID.
 8. Concurrency: runs for `main` are never cancelled (one may be applying); the apply job also holds the group `terraform-state-lab`.
@@ -66,7 +66,7 @@ Short-lived credentials, no stored keys. Use **two roles** so the job that runs 
      }]
    }
    ```
-   There is intentionally no `pull_request` subject. Permissions: the AWS-managed `ReadOnlyAccess` policy, plus `s3:ListBucket` on the state bucket and `s3:GetObject`/`PutObject` on the state key and its `.tflock` object (the S3 backend writes a lock file even for plans; the workflow uses `-lock=false`, but `init` still needs read access).
+   There is intentionally no `pull_request` subject. Permissions: the AWS-managed `ReadOnlyAccess` policy plus **read-only** access to the state object (`s3:ListBucket` on the bucket, `s3:GetObject` on the state key). CI plans with `-lock=false`, which touches no lock object, so this role needs no S3 write access. The exact statements, derived from the S3 requests Terraform makes, are in [`REMOTE_STATE.md`](REMOTE_STATE.md#iam-permissions-for-state).
 3. **Apply role** (`AWS_APPLY_ROLE_ARN`, also used by `terraform-destroy.yml`). Job 6 declares `environment: lab`, so its subject becomes the Environment. Same trust policy with `"token.actions.githubusercontent.com:sub": "repo:OWNER/REPO:environment:lab"`. Permissions: see below.
 4. **Repository variables** (not secret): `AWS_PLAN_ROLE_ARN`, `AWS_APPLY_ROLE_ARN`. A single `AWS_ROLE_ARN` is accepted as a fallback for both, which is not recommended.
 
@@ -94,22 +94,15 @@ Leave the `*_ROLE_ARN` variables unset and the action uses secrets named exactly
 |---|---|---|---|
 | `AWS_PLAN_ROLE_ARN`, `AWS_APPLY_ROLE_ARN` | variable | OIDC | roles above (or `AWS_ROLE_ARN` for both) |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | secret | key fallback | see above |
-| `TF_STATE_BUCKET` | variable | push plan, apply | S3 state bucket. Push runs fail with a clear error without it. |
+| `TF_STATE_BUCKET` | variable | **every AWS-backed run** | S3 state bucket ([`REMOTE_STATE.md`](REMOTE_STATE.md)). Without it the run fails immediately with a clear error. |
 | `TF_STATE_KEY` | variable | optional | default `ha-web/lab/terraform.tfstate` |
+| `TF_STATE_REGION` | variable | optional | region **of the bucket**, default `us-east-1` |
 | `TF_PLAN_ENCRYPTION_KEY` | **secret** | push plan, apply | encrypts the plan artifact. Generate with `openssl rand -base64 48`; keep a copy: rotating it between plan and apply makes that run's apply fail (re-run). |
 | `TF_VAR_DOMAIN_NAME`, `TF_VAR_HOSTED_ZONE_NAME` | variable | optional | set **both** or neither |
 
-### State bucket (once, outside this stack)
+### State bucket
 
-```bash
-B=<globally-unique-name>
-aws s3api create-bucket --bucket $B --region us-east-1
-aws s3api put-public-access-block --bucket $B --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
-aws s3api put-bucket-versioning --bucket $B --versioning-configuration Status=Enabled
-aws s3api put-bucket-encryption --bucket $B --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
-```
-
-The apply role needs `s3:ListBucket` plus `GetObject`/`PutObject`/`DeleteObject` on the state key and its `.tflock` object (native locking, Terraform ≥ 1.10).
+Create it once, outside this stack, as described in [`REMOTE_STATE.md`](REMOTE_STATE.md#create-the-bucket-once-outside-this-stack): private, versioned, encrypted, with a policy that denies non-TLS access. The apply role additionally needs write access to the state object and read/write/delete on its `.tflock` object; those statements are in the same document.
 
 ## GitHub Environment `lab` (the approval gate)
 
