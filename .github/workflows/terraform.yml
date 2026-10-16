@@ -165,8 +165,9 @@ jobs:
   terraform-apply:
     name: "6 - Terraform apply (auto-approve)"
     needs: [terraform-plan]
-    # Only a manual run with "apply" ticked. Never on push or pull_request.
-    if: github.event_name == 'workflow_dispatch' && inputs.apply
+    # Only a manual run with "apply" ticked, from main. Never on push or pull_request. Checking the
+    # branch here (not in a step) means a run from another branch is skipped before any approval request.
+    if: github.event_name == 'workflow_dispatch' && inputs.apply && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 90 # Multi-AZ RDS + CloudFront can take 30+ minutes
     environment: lab # required-reviewer gate lives here (create it with reviewers; see docs/GITHUB_ACTIONS.md)
