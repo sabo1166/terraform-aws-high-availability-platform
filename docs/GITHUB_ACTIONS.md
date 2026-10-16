@@ -126,9 +126,13 @@ Also enable branch protection on `main` (require pull requests and the "Terrafor
 
 Job 7 ("Workflow summary") always runs, lists every job with its result and a note for each skip, and fails with "First failing prerequisite: …". **Skipped is not failed**: plan is skipped on pull requests by design, and apply is skipped when the plan has no changes. Start at the first failed job in the table.
 
+## Re-running a failed run does not pick up a fix
+
+"Re-run jobs" executes the workflow file **of the commit that run belongs to**, not the current `main`. If a fix has been pushed since, re-running the old run fails exactly as before (this happened with commit `2ada9cc`: both attempts failed at the same step, while the next commit's run passed). To test a fix, push a commit or start a new run from the Actions tab (*Run workflow*), and read the run for the newest commit.
+
 ## Pinned versions
 
-Third-party actions are pinned to full commit SHAs with the release in a trailing comment (checked against the upstream tags with `git ls-remote`; `scripts/check_workflows.py` fails on any unpinned reference). Terraform is pinned to `1.16.2`, Checkov to `3.3.29`, TFLint to `v0.64.0`, PyYAML to `6.0.2`. Update deliberately (Dependabot's `github-actions` ecosystem works for the action SHAs).
+Third-party actions are pinned to full commit SHAs with the release in a trailing comment (checked against the upstream tags with `git ls-remote`; `scripts/check_workflows.py` fails on any unpinned reference). Runners are pinned to `ubuntu-24.04` rather than `ubuntu-latest`, which GitHub is moving to Ubuntu 26.04 from 2026-10-19 ([runner-images #14748](https://github.com/actions/runner-images/issues/14748)); `check_workflows.py` rejects floating `-latest` labels. Move to a newer image deliberately, after running the jobs on it. `checkout` (v6.0.3), `setup-terraform` (v4.0.1) and `setup-python` (v6.3.0) target Node 24. `upload-artifact`, `download-artifact` and `configure-aws-credentials` still target Node 20, which GitHub currently forces onto Node 24 with a warning; they are only used by the plan and apply path, which cannot run until AWS is configured, so they are to be upgraded and tested together with the first real plan. Terraform is pinned to `1.16.2`, Checkov to `3.3.29`, TFLint to `v0.64.0`, PyYAML to `6.0.2`. Update deliberately (Dependabot's `github-actions` ecosystem works for the action SHAs).
 
 ## Public repositories
 

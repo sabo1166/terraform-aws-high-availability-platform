@@ -123,6 +123,21 @@ Two of my own test mistakes are worth recording: Git Bash rewrote a test argumen
 
 **Not verified.** How GitHub renders the SVGs (assumed from standard behavior of SVG used as an image: internal `<use>` references and an embedded `<style>`; scripts are never executed there, and none are used); browsers other than Chrome (Firefox, Safari, Edge); real touch devices (a phone viewport was emulated); screen readers and other assistive technology (only automated ARIA and keyboard checks were run); animation smoothness (judged only by logic and screenshots). The diagram and page show configured defaults and a simulation, not any AWS account.
 
+## 3e. CI job 3 failure on GitHub, and what it exposed
+
+**Observed** (GitHub's run and job records, read through its API; the raw logs need authentication and were not read): run for commit `2ada9cc` failed in job 3 at step 6, "Provider versions" (`terraform providers`), in attempt 1 and in attempt 2, which was started about a minute later. Steps 4 and 5 (`Versions`, `terraform init -backend=false`) succeeded; `validate`, `terraform test` and TFLint were skipped. The run for the next commit, `60c0db5`, passed all nine steps of job 3.
+
+**Root cause.** `backend.tf` had just been committed with an S3 backend, and job 3 deliberately initialises with `-backend=false`. `terraform providers` reads state, so it requires an initialised backend ("Backend initialization required"). The step only printed provider versions. Attempt 2 failed identically because re-running a run executes the workflow file of the original commit, not the current `main`.
+
+**Reproduced and verified locally.** Replaying job 3 from the workflow file as committed in `2ada9cc` (`git show`) fails in the same order GitHub recorded (`Versions` ok, `init` ok, `Provider versions` fail, rest skipped); the current workflow passes all steps (init, version listing, validate, `terraform test`, TFLint). `terraform test` was also run with the network cut (dead proxy) and invalid credentials: 12 of 12 pass, so the mocked tests need no cloud access. The fix (commit `60c0db5`) replaces the step with `terraform version` after `init`, which prints the same provider versions. `scripts/replay_ci.py` runs the real commands of jobs 1-3 so local checks cannot drift from CI again.
+
+**Additional issues found in GitHub's annotations of that job, and fixed.**
+
+- *Node.js 20 deprecation warning.* `checkout`, `setup-terraform` and `setup-python` declare `node20`; GitHub forces them onto Node 24 with a warning. Upgraded to releases that declare `node24`: checkout v6.0.3, setup-terraform v4.0.1, setup-python v6.3.0 (commit SHAs resolved from the tags, runtimes read from each `action.yml`, upstream changelogs read for breaking changes: none affects this repository). `upload-artifact`, `download-artifact` and `configure-aws-credentials` still declare `node20`; they are used only by the plan and apply path, which cannot run until AWS is configured, so they were deliberately not bumped blind.
+- *`ubuntu-latest` migrates to Ubuntu 26.04 from 2026-10-19.* All jobs now use `ubuntu-24.04`, as GitHub recommends for stability; the policy test rejects floating `-latest` labels (mutation-tested).
+
+Verified locally after these changes: `actionlint` exit 0, `check_workflows.py` OK, `replay_ci.py` all steps passed. Confirmation that jobs 1-4 pass on GitHub with the new pins is recorded in the commit's run, not here.
+
 ## 3b. Final review from a fresh clone (before the second push)
 
 The committed repository was cloned into a scratch directory and checked there, so the result does not depend on untracked files: `terraform fmt -check`, `init -lockfile=readonly`, `validate`, `terraform test` (12 of 12), TFLint (exit 0), Checkov (235 passed, 0 failed, 32 skipped), `actionlint` (exit 0) and `check_links.py` (0 broken) all pass. Line endings were measured by counting 0x0D bytes with Python: 0 in the committed blobs of every tracked file and 0 in the fresh clone's bootstrap templates, with `core.autocrlf=true` on this machine, so `.gitattributes` works. An earlier `grep -c` probe reported CRs; it was a false positive (the count equalled the line count) and was disregarded after this direct measurement.

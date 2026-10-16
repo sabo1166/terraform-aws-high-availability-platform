@@ -158,6 +158,10 @@ def main() -> int:
             if not ref.startswith("./"):
                 check(re.search(r"@[0-9a-f]{40}$", ref) is not None, f"{f.name}: action not pinned to a full commit SHA: {ref}")
 
+    for f in sorted(WF_DIR.glob("*.yml")):
+        for name, job in yaml.safe_load(f.read_text(encoding="utf-8"))["jobs"].items():
+            label = str(job.get("runs-on", ""))
+            check(not label.endswith("-latest"), f"{f.name}:{name}: runs-on must pin an image (e.g. ubuntu-24.04), not the moving label {label!r}")
     check(tf.get("permissions") == {"contents": "read"}, f"workflow permissions must be contents: read, got {tf.get('permissions')}")
     for name, job in jobs.items():
         idt = (job.get("permissions") or {}).get("id-token")

@@ -284,7 +284,7 @@ Files:
 
 Seven separate jobs: repository checks, format, validate and test, Checkov, plan, apply of the saved plan, and a summary that names the first failure. Pull requests run static checks only.
 
-**Observed on GitHub:** Observed on GitHub for the first run of this workflow design (commit 7d13de0): jobs 1-4 succeeded; job 5 failed at its configuration check because the state bucket variable was not set; job 6 was skipped. That is the intended behavior and not a deployment.
+**Observed on GitHub:** Observed on GitHub (run and job records). Commit 7d13de0: jobs 1-4 passed and job 5 failed at its configuration check because the state bucket variable was not set. Commit 2ada9cc: job 3 failed at the step "Provider versions" because terraform providers needs an initialised backend and the job runs init with -backend=false; re-running that run failed identically, because a re-run uses the workflow file of the original commit. Commit 60c0db5 removed the step: jobs 1-4 passed. Job 5 still fails at the state-bucket check by design. No plan or apply has run.
 
 Evidence:
 
